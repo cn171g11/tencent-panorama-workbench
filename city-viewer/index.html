@@ -75,7 +75,7 @@
 </head>
 <body>
 <header>
-  <h1>街景元数据查看器 <span class="ver">v2.30.0</span><span class="ver-note"> · 2026-11-07 恢复搜索 · gzip 无损按需加载</span></h1>
+  <h1>街景元数据查看器 <span class="ver">v2.31.0</span><span class="ver-note"> · 2026-11-07 恢复搜索 · gzip 无损按需加载</span></h1>
   <select id="provinceSelect" title="省级行政区"></select>
   <select id="citySelect" title="地级市" disabled></select>
   <select id="countySelect" title="县级行政区" style="display:none"></select>
@@ -375,8 +375,8 @@
   }
 
   // ---------- provinces & data ----------
-  // 只做 省 → 地级市(地级行政区) 两级，不区分县级行政区。
-  // 每个 meta 条目带 pref = 所属地级行政区键；省标签只列省，市下拉列地级市。
+  // 省 → 地级市 → 二级行政区三级筛选；边界覆盖的城市显示县/区按钮。
+  // 每个 meta 条目带 pref = 所属地级行政区键；没有独立边界的特殊单元保留“全部”。
   function prefOf(key){
     var m=(window.PANO_META||{})[key]||{};
     return m.pref||key;
