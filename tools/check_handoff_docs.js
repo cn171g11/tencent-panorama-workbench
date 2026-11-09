@@ -151,7 +151,7 @@ const checkRecordedHead = (file, pattern) => {
 
 if (headShort) {
   checkRecordedHead('AGENT.md', /HEAD `([0-9a-f]{7,40})`/);
-  checkRecordedHead('agent_history.md', /\|\s*HEAD\s*\|\s*`([0-9a-f]{7,40})`/);
+  checkRecordedHead('agent_history.md', /\|\s*HEAD[^|]*\|\s*`([0-9a-f]{7,40})`/);
 } else {
   notes.push('git 不可用，跳过记录提交检查');
 }
