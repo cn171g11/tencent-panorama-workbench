@@ -339,5 +339,97 @@ class GzipSiteTests(unittest.TestCase):
         self.assertIn("Refusing to overwrite", stderr.getvalue())
 
 
+    def test_native_header_metadata_is_removed_without_changing_payload(self):
+        import struct
+        import zlib
+        raw = b'precise\x00\xff\r\nbytes'
+        original = gzip.compress(raw, mtime=123)
+        header = original[:3] + bytes([0x1e]) + original[4:10]
+        header += struct.pack('<H', 4) + b'test' + b'original.js\0comment\0'
+        header += struct.pack('<H', zlib.crc32(header) & 0xffff)
+        native, normalized = self.root / 'native.gz', self.root / 'normalized.gz'
+        native.write_bytes(header + original[10:])
+        publisher._normalize_gzip_header(native, normalized)
+        value = normalized.read_bytes()
+        self.assertEqual(value[:10], b'\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff')
+        self.assertEqual(gzip.decompress(value), raw)
+
+    def test_native_bad_or_unbounded_headers_are_rejected(self):
+        payloads = [b'bad', b'x' * 10,
+                    b'\x1f\x8b\x08\x20' + b'\0' * 6,
+                    b'\x1f\x8b\x08\x08' + b'\0' * 6 + b'x' * 65536]
+        for index, data in enumerate(payloads):
+            native = self.root / ('bad-%d.gz' % index)
+            destination = self.root / ('result-%d.gz' % index)
+            native.write_bytes(data)
+            with self.assertRaises(publisher.BuildError):
+                publisher._normalize_gzip_header(native, destination)
+            self.assertFalse(destination.exists())
+
+    def test_native_backend_validates_executable_and_worker_bounds(self):
+        for options in [
+            {'compression_backend': 'other'},
+            {'compression_backend': '7zip', 'seven_zip': self.root / 'missing-7zip'},
+            {'compression_backend': '7zip', 'seven_zip': sys.executable, 'workers': 5},
+            {'seven_zip': sys.executable},
+        ]:
+            with self.subTest(options=options), self.assertRaises(publisher.BuildError):
+                self.build(**options)
+            self.assertFalse(self.output.exists())
+
+    def test_native_process_failure_never_publishes_success(self):
+        import subprocess
+        def fail(command, **kwargs):
+            kwargs['stderr'].write(b'simulated compressor failure')
+            return subprocess.CompletedProcess(command, 2)
+        with mock.patch('subprocess.run', side_effect=fail):
+            with self.assertRaisesRegex(publisher.BuildError, '7-Zip compression failed'):
+                self.build(workers=1, compression_backend='7zip', seven_zip=sys.executable)
+        self.assertFalse((self.output / 'build-report.json').exists())
+        self.assertFalse((self.output / 'city-viewer/asset-manifest.js').exists())
+        self.assertFalse(any((self.output / 'city-viewer').glob('.gzip-*')))
+
+    def test_native_corrupt_payload_is_rejected_after_header_normalization(self):
+        import subprocess
+        def corrupt(command, **kwargs):
+            Path(command[-2]).write_bytes(gzip.compress(b'different bytes', mtime=123))
+            return subprocess.CompletedProcess(command, 0)
+        with mock.patch('subprocess.run', side_effect=corrupt):
+            with self.assertRaisesRegex(publisher.BuildError, 'byte verification'):
+                self.build(workers=1, compression_backend='7zip', seven_zip=sys.executable)
+        self.assertFalse((self.output / 'build-report.json').exists())
+        self.assertFalse(any((self.output / 'city-viewer').glob('.gzip-*')))
+
+    def test_native_timeout_is_reported_and_scratch_is_cleaned(self):
+        import subprocess
+        with mock.patch('subprocess.run', side_effect=subprocess.TimeoutExpired('7zip', 600)):
+            with self.assertRaisesRegex(publisher.BuildError, 'timed out'):
+                self.build(workers=1, compression_backend='7zip', seven_zip=sys.executable)
+        self.assertFalse((self.output / 'build-report.json').exists())
+        self.assertFalse(any((self.output / 'city-viewer').glob('.gzip-*')))
+
+    def test_installed_7zip_preserves_all_fixture_bytes_and_canonical_headers(self):
+        import shutil
+        executable = shutil.which('7z') or shutil.which('7zz')
+        installed = Path(r'C:\Program Files\7-Zip\7z.exe')
+        if not executable and installed.is_file():
+            executable = str(installed)
+        if not executable:
+            self.skipTest('An installed 7-Zip is required for the optional native fixture')
+        snapshot = {path.relative_to(self.source): path.read_bytes()
+                    for path in self.source.rglob('*') if path.is_file()}
+        report = self.build(workers=1, compression_backend='7zip', seven_zip=executable)
+        self.assertEqual(report['compression']['backend'], '7zip')
+        self.assertEqual(report['verifiedFiles'], len(self.raw_names))
+        for name in self.raw_names:
+            encoded = (self.output / 'city-viewer' / (name + '.gz')).read_bytes()
+            self.assertEqual(encoded[:10], b'\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff')
+            self.assertEqual(gzip.decompress(encoded), (self.source / name).read_bytes())
+        self.assertEqual(snapshot, {path.relative_to(self.source): path.read_bytes()
+                                    for path in self.source.rglob('*') if path.is_file()})
+        self.assertFalse(any((self.output / 'city-viewer').glob('.gzip-*')))
+        self.assertNotIn(str(self.root), (self.output / 'build-report.json').read_text('utf-8'))
+
+
 if __name__ == "__main__":
     unittest.main()

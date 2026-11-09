@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Check out sources
@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Rebuild grid and search indexes from original data
-        run: node --max-old-space-size=6144 tools/build_viewer_index.js --with-search
+        run: node --max-old-space-size=768 --expose-gc tools/build_viewer_index.js --with-search
       - name: Validate hidden collections, display, search, and unique IDs
         run: |
           node tools/check_viewer_hidden_grid.js
@@ -38,10 +38,10 @@ jobs:
       - name: Run Python fixture regression tests
         run: python -m unittest discover -s tools/tests -v
       - name: Run browser asset loader and mobility regression tests
-        run: node --test tools/tests/asset-loader.test.js tools/tests/pano-mobility.test.js tools/tests/redirect-site.test.js
+        run: node --test tools/tests/asset-loader.test.js tools/tests/pano-mobility.test.js tools/tests/redirect-site.test.js tools/tests/viewer-stream.test.js
       - name: Build the verified gzip-only publication directory
         run: |
-          python tools/build_gzip_site.py --output dist/pages --workers 4
+          python tools/build_gzip_site.py --output dist/pages --workers 4 --compression-backend 7zip
           python -c "from pathlib import Path; size=sum(p.stat().st_size for p in Path('dist/pages').rglob('*') if p.is_file()); print(f'Published directory bytes={size}'); assert size <= 1000000000, 'Pages directory exceeds 1 GB; retain data and choose another hosting plan'"
       - name: Upload only the publication artifact
         uses: actions/upload-pages-artifact@v3
@@ -50,7 +50,7 @@ jobs:
 
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read

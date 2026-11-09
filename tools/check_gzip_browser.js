@@ -10,6 +10,17 @@ const assert = require('assert');
 const args = process.argv.slice(2);
 function arg(name, fallback) { const i=args.indexOf(name); return i<0?fallback:args[i+1]; }
 const sourceRoot=path.resolve(arg('--source','city-viewer'));
+const sourceHTML=fs.readFileSync(path.join(sourceRoot,'index.html'),'utf8');
+const sourceVersion=sourceHTML.match(/<span class="ver">(v\d+\.\d+\.\d+)<\/span>/)?.[1];
+if(!sourceVersion)throw Error('Source viewer version is missing');
+const metaText=fs.readFileSync(path.join(sourceRoot,'data_meta.js'),'utf8');
+const countMarker='window.PANO_COUNT=';
+const countOffset=metaText.indexOf(countMarker);
+if(countOffset<0)throw Error('Source PANO_COUNT is missing');
+const sourceCounts=JSON.parse(metaText.slice(countOffset+countMarker.length).split(';')[0]);
+const expectedVersion=arg('--expected-version',sourceVersion);
+const expectedTotal=Number(arg('--expected-total',Object.values(sourceCounts).reduce((a,b)=>a+b,0)));
+const expectedFiles=Number(arg('--expected-files',Object.keys(sourceCounts).filter(k=>k!=='hidden'&&!k.startsWith('hidden_')).length+3));
 const siteRoot=arg('--site-root',null);
 const liveUrl=arg('--url',null);
 const edge=arg('--browser','C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe');
@@ -77,7 +88,7 @@ async function main(){
  await send('Page.navigate',{url:pageURL});
  await until(()=>evaluate(`Boolean(window.PANO_ASSET_MANIFEST&&window.PANO_ASSET_MANIFEST.codec==='gzip'&&window.__GZIP_TEST_MAP__&&document.getElementById('search')&&!document.getElementById('search').disabled&&document.getElementById('stats').textContent.includes('点'))`));
  report.checks.boot=await evaluate(`({version:document.querySelector('.ver').textContent,total:Object.values(window.PANO_COUNT).reduce((a,b)=>a+b,0),files:Object.keys(window.PANO_ASSET_MANIFEST.files).length,searchIndexLoaded:Boolean(window.PANO_SEARCH_INDEX),hiddenGame:window.PANO_CITY.hidden_game.length,stats:document.getElementById('stats').textContent})`);
- assert.equal(report.checks.boot.version,'v2.28.0');assert.equal(report.checks.boot.total,40870386);assert.equal(report.checks.boot.files,475);assert.equal(report.checks.boot.searchIndexLoaded,false);assert.equal(report.checks.boot.hiddenGame,15);
+ assert.equal(report.checks.boot.version,expectedVersion);assert.equal(report.checks.boot.total,expectedTotal);assert.equal(report.checks.boot.files,expectedFiles);assert.equal(report.checks.boot.searchIndexLoaded,false);assert.equal(report.checks.boot.hiddenGame,15);
  assert(!requests.some(u=>u.includes('pano_search_index.js.gz')),'Index downloaded before a query');
  // Render the real isolated game collection in scatter mode and inspect its red hits.
  await evaluate(`(function(){var p=document.getElementById('provinceSelect');p.value=window.PANO_META.hidden_game.province;p.dispatchEvent(new Event('change'));var c=document.getElementById('citySelect');c.value='hidden_game';c.dispatchEvent(new Event('change'));var d=document.getElementById('dispMode');d.value='points';d.dispatchEvent(new Event('change'));})()`);

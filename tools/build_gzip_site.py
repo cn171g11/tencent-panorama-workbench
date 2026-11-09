@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Build an independent, byte-preserving gzip site (Python standard library only).
+"""Build an independent, byte-preserving gzip site.
 
+The default compressor uses only the Python standard library; the optional 7zip
+backend uses an already-installed executable for bounded Deflate optimization.
 The source viewer is never rewritten. Point shards and derived indexes are streamed
-as gzip level 9, with an empty filename and mtime=0; every output is then compared
+as maximum-level standard gzip, with an empty filename and mtime=0; every output is then compared
 chunk-for-chunk against its original. Existing nonempty output directories are
 always refused, including after a failed build. Choose a new --output to retry.
 """
@@ -204,7 +206,80 @@ def _verify_gzip(source: Path, compressed: Path, expected_bytes: int, expected_h
         raise BuildError(f"Gzip size/SHA-256 verification failed: {source.name}")
 
 
-def _compress_asset(source: Path, destination: Path, asset: Asset) -> dict:
+def _normalize_gzip_header(source: Path, destination: Path) -> None:
+    with source.open("rb") as native:
+        def exact(size: int) -> bytes:
+            value = native.read(size)
+            if len(value) != size:
+                raise BuildError("Truncated native gzip header")
+            return value
+        header = exact(10)
+        if header[:3] != b"\x1f\x8b\x08" or header[3] & 0xe0:
+            raise BuildError("Invalid native gzip header")
+        flags = header[3]
+        if flags & 4:
+            exact(int.from_bytes(exact(2), "little"))
+        for flag in (8, 16):
+            if flags & flag:
+                for _ in range(65536):
+                    if exact(1) == b"\0":
+                        break
+                else:
+                    raise BuildError("Native gzip header exceeds the bound")
+        if flags & 2:
+            exact(2)
+        with destination.open("xb") as output:
+            output.write(b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff")
+            for chunk in iter(lambda: native.read(CHUNK_SIZE), b""):
+                output.write(chunk)
+
+
+def _compress_asset(source: Path, destination: Path, asset: Asset, *,
+                    backend: str = "python", seven_zip: str | None = None) -> dict:
+    if backend == "python":
+        return _compress_asset_python(source, destination, asset)
+    if backend != "7zip" or not seven_zip:
+        raise BuildError("A 7-Zip executable is required for the native gzip backend")
+    import shutil
+    import subprocess
+    import tempfile
+    original = source / asset.name
+    compressed = destination / (asset.name + ".gz")
+    if _signature(original) != asset.signature:
+        raise BuildError(f"Source changed after preflight: {asset.name}")
+    parent = destination.resolve()
+    scratch = Path(tempfile.mkdtemp(prefix=".gzip-", dir=parent)).resolve()
+    if scratch.parent != parent or not scratch.name.startswith(".gzip-"):
+        raise BuildError("Unexpected native gzip scratch path")
+    try:
+        native, errors = scratch / "native.gz", scratch / "stderr.txt"
+        with errors.open("wb") as stderr:
+            try:
+                result = subprocess.run([str(seven_zip), "a", "-tgzip", "-mx=9", "-mfb=128",
+                    "-mpass=3", "-mmt=1", "-y", str(native), str(original)],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=stderr, timeout=600)
+            except subprocess.TimeoutExpired as error:
+                raise BuildError(f"7-Zip compression timed out: {asset.name}") from error
+        if result.returncode:
+            detail = errors.read_text(encoding="utf-8", errors="replace")[-2000:].strip()
+            raise BuildError(f"7-Zip compression failed: {asset.name} (exit {result.returncode}) {detail}")
+        _normalize_gzip_header(native, compressed)
+    finally:
+        if scratch.is_symlink() or scratch.resolve() != scratch or scratch.parent != parent:
+            raise BuildError("Native gzip scratch path changed; refusing cleanup")
+        shutil.rmtree(scratch)
+    raw_hash = _hash_file(original)
+    if _signature(original) != asset.signature:
+        raise BuildError(f"Source changed during compression: {asset.name}")
+    _verify_gzip(original, compressed, asset.size, raw_hash)
+    if _signature(original) != asset.signature:
+        raise BuildError(f"Source changed during verification: {asset.name}")
+    return {"url": asset.name + ".gz", "bytes": asset.size,
+            "compressedBytes": compressed.stat().st_size, "sha256": raw_hash,
+            "gzipSha256": _hash_file(compressed)}
+
+
+def _compress_asset_python(source: Path, destination: Path, asset: Asset) -> dict:
     original = source / asset.name
     compressed = destination / (asset.name + ".gz")
     if _signature(original) != asset.signature:
@@ -242,8 +317,22 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
                output: Path | str = REPOSITORY_ROOT / "dist" / "pages", *,
                workers: int = DEFAULT_WORKERS, progress_interval: float = 5.0,
                expected_files: int | None = None,
-               progress: Callable[[str], None] | None = None) -> dict:
+               progress: Callable[[str], None] | None = None,
+               compression_backend: str = "python", seven_zip: Path | str | None = None) -> dict:
     """Build from the metadata inventory, with an optional fixed-count release gate."""
+    import shutil
+    if compression_backend not in ("python", "7zip"):
+        raise BuildError("compression_backend must be python or 7zip")
+    native_executable = None
+    if compression_backend == "7zip":
+        executable = str(seven_zip) if seven_zip is not None else shutil.which("7z") or shutil.which("7zz")
+        if not executable or not Path(executable).is_file():
+            raise BuildError("7-Zip executable is unavailable; provide --seven-zip")
+        native_executable = str(Path(executable).resolve())
+        if type(workers) is int and workers > 4:
+            raise BuildError("Native gzip compression supports at most 4 bounded workers")
+    elif seven_zip is not None:
+        raise BuildError("--seven-zip requires the 7zip compression backend")
     if type(workers) is not int or not 1 <= workers <= MAX_WORKERS:
         raise BuildError(f"workers must be between 1 and {MAX_WORKERS}")
     if expected_files is not None and (type(expected_files) is not int or expected_files < 1):
@@ -283,7 +372,8 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
             asset = next(asset_iterator, None)
             if asset is None:
                 return False
-            pending[executor.submit(_compress_asset, source_path, viewer_output, asset)] = asset
+            pending[executor.submit(_compress_asset, source_path, viewer_output, asset,
+                backend=compression_backend, seven_zip=native_executable)] = asset
             return True
 
         # Bound queued work too: never submit the full repository at once.
@@ -322,6 +412,9 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
               "compression": {"level": 9, "mtime": 0, "filename": ""},
               "workers": workers, "seconds": round(time.monotonic() - started, 3),
               "staticFiles": static_names}
+    if compression_backend == "7zip":
+        report["compression"].update({"backend": "7zip", "fastBytes": 128,
+                                      "passes": 3, "threadsPerWorker": 1})
     # Publish success markers only after every gzip has passed byte/SHA checks.
     with (viewer_output / "asset-manifest.js").open("x", encoding="utf-8", newline="\n") as file:
         file.write(MANIFEST_PREFIX + _js_json(manifest) + ";\n")
@@ -346,6 +439,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="new or empty output directory (default: repository dist/pages)")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
                         help=f"bounded compression threads, 1..{MAX_WORKERS} (default: {DEFAULT_WORKERS})")
+    parser.add_argument("--compression-backend", choices=("python", "7zip"), default="python",
+                        help="standard gzip compressor; 7zip uses bounded Deflate optimization")
+    parser.add_argument("--seven-zip", type=Path, default=None,
+                        help="existing 7-Zip executable (otherwise resolve 7z/7zz from PATH)")
     parser.add_argument("--expected-files", type=int, default=None,
                         help="optional exact asset count release gate (default: derive from PANO_COUNT + 3 derived files)")
     parser.add_argument("--progress-interval", type=float, default=5.0,
@@ -354,7 +451,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         build_site(args.source, args.output, workers=args.workers,
                    progress_interval=args.progress_interval, expected_files=args.expected_files,
-                   progress=lambda message: print(message, flush=True))
+                   progress=lambda message: print(message, flush=True),
+                    compression_backend=args.compression_backend, seven_zip=args.seven_zip)
     except (BuildError, OSError, EOFError) as error:
         print(f"gzip build failed: {error}", file=sys.stderr, flush=True)
         return 1

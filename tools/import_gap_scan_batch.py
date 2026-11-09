@@ -197,7 +197,46 @@ def load_entries(path):
     return key, entries
 
 
-def collect_existing_ids(viewer, adcodes, province_keys):
+def collect_existing_ids(viewer, adcodes, province_keys, candidate_ids=None, proof_path=None):
+    import hashlib
+    from stream_pano_rows import iter_pano_rows
+
+    viewer = Path(viewer)
+    paths = sorted(path for path in viewer.glob("data_*.js")
+                   if path.name not in ("data_meta.js", "data_districts.js"))
+    paths.append(viewer / "hidden_pano.js")
+    wanted = set(candidate_ids) if candidate_ids is not None else None
+    if proof_path is not None:
+        proof = json.loads(Path(proof_path).read_text(encoding="utf-8"))
+        if wanted is None or any(not isinstance(sid, str) or "\n" in sid or "\r" in sid for sid in wanted):
+            raise ValueError("Exclusion proof requires an exact candidate SID set")
+        sid_hash = hashlib.sha256(("\n".join(sorted(wanted)) + "\n").encode("utf-8")).hexdigest()
+        if proof.get("version") != 1 or Path(proof.get("viewer", "")).resolve() != viewer.resolve():
+            raise ValueError("Exclusion proof belongs to a different viewer")
+        if proof.get("candidateCount") != len(wanted) or proof.get("candidateSidSha256") != sid_hash:
+            raise ValueError("Exclusion proof candidate set changed")
+        meta_bytes = (viewer / "data_meta.js").read_bytes()
+        if hashlib.sha256(meta_bytes).hexdigest() != proof.get("metaSha256"):
+            raise ValueError("Exclusion proof metadata changed")
+        if sum(load_meta(viewer)[2].values()) != proof.get("baselineTotal"):
+            raise ValueError("Exclusion proof baseline total changed")
+        sources = proof.get("pointSources", {})
+        if set(sources) != {path.name for path in paths}:
+            raise ValueError("Exclusion proof source inventory changed")
+        for path in paths:
+            with path.open("rb") as stream:
+                actual = hashlib.file_digest(stream, "sha256").hexdigest()
+            if actual != sources[path.name]:
+                raise ValueError("Exclusion proof point source changed: " + path.name)
+        return {}
+    if wanted is not None:
+        ids = {}
+        for path in paths:
+            for key, raw, entry in iter_pano_rows(path):
+                sid = str(entry[0])
+                if sid in wanted:
+                    ids[sid] = key
+        return ids
     ids = {}
     for code in adcodes:
         for key, path in shard_keys(viewer, code):
@@ -263,6 +302,8 @@ def main():
                         help="city layer adcodes to check for duplicates")
     parser.add_argument("--viewer", type=Path, default=Path("city-viewer"))
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--existing-proof", type=Path,
+                        help="reuse an already-filtered candidate snapshot after checking every source SHA")
     args = parser.parse_args()
 
     records = {}
@@ -287,7 +328,8 @@ def main():
     prefectures = load_prefectures(args.boundaries, province_codes)
 
     existing = collect_existing_ids(args.viewer, args.adcodes,
-                                    ["qq_" + code for code in args.provinces])
+                                    ["qq_" + code for code in args.provinces],
+                                    candidate_ids=records, proof_path=args.existing_proof)
 
     stats = {"candidates": len(records), "hidden": 0, "regular": 0, "invalid": 0, "error": 0,
              "already_present": 0, "imported_hidden": 0, "imported_regular": 0, "no_prefecture": 0}
@@ -325,7 +367,11 @@ def main():
                 skipped["no_prefecture"].append(identifier)
                 continue
             key = "qq_" + item["province_code"][:2]
-            regular_additions.setdefault(key, {"item": item, "records": []})["records"].append(record)
+            additions = regular_additions.setdefault(key, {"item": item, "records": [], "cities": {}})
+            additions["records"].append(record)
+            city = additions["cities"].setdefault(item["adcode"],
+                {"city": item["name"], "province": item["province"], "added": 0})
+            city["added"] += 1
             stats["imported_regular"] += 1
         else:
             category = status if status in ("invalid", "error") else "invalid"
@@ -362,8 +408,10 @@ def main():
                                        "province": item["province"], "pref": key}
         meta[key] = meta_entry
         counts[key] = len(entries)
+        if len(fresh) != len(payload["records"]):
+            raise ValueError("Regular additions changed after global exclusion: " + key)
         report["regular_collections"][key] = {"province": item["province"], "added": len(fresh),
-                                              "total": len(entries)}
+                                              "total": len(entries), "cities": payload["cities"]}
         if not args.dry_run:
             write_regular_shard(args.viewer, key, entries)
 

@@ -6,6 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { forEachPanoRow } = require('./stream_pano_rows.js');
 
 const VIEWER_ROOT = path.resolve(__dirname, "..", "city-viewer");
 const GRID_RESOLUTION = 0.004;
@@ -81,27 +82,26 @@ function collectCityFiles() {
 function buildStats(withSearch = false) {
   const stats = { grid: {}, withSearch, prefix: {}, segments: {}, roads: {}, dates: {} };
   let totalEntries = 0;
-
-  for (const filePath of collectCityFiles()) {
-    const city = parseCityFile(filePath);
-    if (!city) continue;
-    for (const entry of city.entries) {
-      addEntryToStats(stats, city.key, entry);
+  const files = collectCityFiles();
+  let completedFiles = 0;
+  for (const filePath of files) {
+    forEachPanoRow(filePath, (key, entry) => {
+      addEntryToStats(stats, key, entry);
+      totalEntries++;
+    }, (key) => { stats.grid[key] = stats.grid[key] || new Map(); });
+    if (++completedFiles % 50 === 0) {
+      const memory = process.memoryUsage();
+      console.log(`index_progress files=${completedFiles}/${files.length} entries=${totalEntries} heap_mb=${(memory.heapUsed / 1048576).toFixed(1)} rss_mb=${(memory.rss / 1048576).toFixed(1)}`);
     }
-    totalEntries += city.entries.length;
   }
-
-  const context = { window: {} };
-  vm.createContext(context);
-  loadScript(context, "hidden_pano.js");
-  const hiddenCollections = Object.entries(context.window.PANO_CITY || {})
-    .filter(([key]) => key === "hidden" || key.startsWith("hidden_"));
-  for (const [key, entries] of hiddenCollections) {
-    stats.grid[key] = stats.grid[key] || new Map();
-    for (const entry of entries) addEntryToStats(stats, key, entry);
-    totalEntries += entries.length;
-  }
-
+  forEachPanoRow(path.join(VIEWER_ROOT, 'hidden_pano.js'), (key, entry) => {
+    if (key === 'hidden' || key.startsWith('hidden_')) {
+      addEntryToStats(stats, key, entry);
+      totalEntries++;
+    }
+  }, (key) => {
+    if (key === 'hidden' || key.startsWith('hidden_')) stats.grid[key] = stats.grid[key] || new Map();
+  });
   return { stats, totalEntries };
 }
 
@@ -123,33 +123,53 @@ function writeGrid(stats) {
 
 function synchronizeHiddenGrid(output) {
   const filePath = path.join(VIEWER_ROOT, "hidden_pano.js");
-  let source = fs.readFileSync(filePath, "utf8");
-  for (const [key, hiddenCells] of Object.entries(output)) {
-    if (key !== "hidden" && !key.startsWith("hidden_")) continue;
-    const marker = `window.PANO_GRID_ALL[${JSON.stringify(key)}]=`;
-    const start = source.indexOf(marker);
-    if (start === -1) throw new Error("Hidden grid assignment is missing: " + key);
-    const end = source.indexOf("];", start);
-    if (end === -1) throw new Error("Hidden grid assignment is unterminated: " + key);
-    // This script loads after grid_all.js, so its fallback must use the same grid.
-    source = source.slice(0, start) + marker + JSON.stringify(hiddenCells) + ";" + source.slice(end + 2);
+  const found = new Set();
+  const source = fs.readFileSync(filePath, "utf8").replace(
+    /(window\.PANO_GRID_ALL\[("[^"\\]+")\]=)\[[^;]*\];/g,
+    (match, marker, quotedKey) => {
+      const key = JSON.parse(quotedKey);
+      if (key !== 'hidden' && !key.startsWith('hidden_')) return match;
+      if (!output[key]) throw new Error('Hidden grid is missing from index: ' + key);
+      found.add(key);
+      return marker + JSON.stringify(output[key]) + ';';
+    }
+  );
+  for (const key of Object.keys(output)) {
+    if ((key === 'hidden' || key.startsWith('hidden_')) && !found.has(key)) {
+      throw new Error('Hidden grid assignment is missing: ' + key);
+    }
   }
-  fs.writeFileSync(filePath, source, "utf8");
+  fs.writeFileSync(filePath, source, 'utf8');
 }
 
 function writeSearchIndex(stats) {
-  const payload = `window.PANO_SEARCH_INDEX=${JSON.stringify({
-    prefix: serializeIndex(stats.prefix),
-    seg1620: serializeIndex(stats.segments),
-    roads: serializeIndex(stats.roads),
-    dates: serializeIndex(stats.dates),
-  })};`;
-  fs.writeFileSync(path.join(VIEWER_ROOT, "pano_search_index.js"), payload, "utf8");
+  const filePath = path.join(VIEWER_ROOT, 'pano_search_index.js');
+  const descriptor = fs.openSync(filePath, 'w');
+  let pending = '';
+  function append(value) {
+    pending += value;
+    if (pending.length >= 65536) { fs.writeSync(descriptor, pending, null, 'utf8'); pending = ''; }
+  }
+  try {
+    append('window.PANO_SEARCH_INDEX={');
+    const groups = [['prefix', stats.prefix], ['seg1620', stats.segments], ['roads', stats.roads], ['dates', stats.dates]];
+    groups.forEach(([name, index], group) => {
+      if (group) append(',');
+      append(JSON.stringify(name) + ':{');
+      Object.keys(index).sort().forEach((value, number) => {
+        if (number) append(',');
+        append(JSON.stringify(value) + ':' + JSON.stringify(Array.from(index[value]).sort()));
+      });
+      append('}');
+    });
+    append('};');
+    if (pending) fs.writeSync(descriptor, pending, null, 'utf8');
+  } finally { fs.closeSync(descriptor); }
   return {
     prefixes: Object.keys(stats.prefix).length,
     segments: Object.keys(stats.segments).length,
     roads: Object.keys(stats.roads).length,
-    bytes: Buffer.byteLength(payload),
+    bytes: fs.statSync(filePath).size,
   };
 }
 
@@ -158,6 +178,8 @@ function main() {
   const withSearch = process.argv.includes('--with-search');
   const { stats, totalEntries } = buildStats(withSearch);
   const grid = writeGrid(stats);
+  stats.grid = {};
+  if (typeof global.gc === 'function') global.gc();
   const index = withSearch ? writeSearchIndex(stats) : null;
   const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
   console.log(
