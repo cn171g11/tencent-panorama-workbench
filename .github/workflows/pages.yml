@@ -1,4 +1,4 @@
-name: Deploy compressed viewer to Pages
+name: Deploy tencent-panorama-workbench to Pages
 
 on:
   push:
@@ -38,7 +38,7 @@ jobs:
       - name: Run Python fixture regression tests
         run: python -m unittest discover -s tools/tests -v
       - name: Run browser asset loader and mobility regression tests
-        run: node --test tools/tests/asset-loader.test.js tools/tests/pano-mobility.test.js
+        run: node --test tools/tests/asset-loader.test.js tools/tests/pano-mobility.test.js tools/tests/redirect-site.test.js
       - name: Build the verified gzip-only publication directory
         run: |
           python tools/build_gzip_site.py --output dist/pages --workers 4

@@ -175,7 +175,7 @@ async function requestPanorama(sid, retries) {
   throw lastError;
 }
 
-const USER_AGENT = 'Mozilla/5.0 panorama-workbench mobility audit';
+const USER_AGENT = 'Mozilla/5.0 tencent-panorama-workbench mobility audit';
 
 async function fetchDirect(url) {
   const response = await fetch(url, {

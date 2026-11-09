@@ -10,7 +10,7 @@
 
 ## 对上次 Pages 错误的修正
 
-[失败运行 42271107089](https://github.com/cn171g11/panorama-workbench/actions/runs/42271107089) 的实际任务结果：build 成功、deploy 失败、report-build-status 成功；上传 artifact 为 **858,166,282 字节**。部署日志经历 deployment_queued → deployment_in_progress → syncing_files，最终报 `Timeout reached, aborting!`，600 秒后取消。
+[失败运行 42271107089](https://github.com/cn171g11/tencent-panorama-workbench/actions/runs/42271107089)（当时仓库旧名为 `panorama-workbench`） 的实际任务结果：build 成功、deploy 失败、report-build-status 成功；上传 artifact 为 **858,166,282 字节**。部署日志经历 deployment_queued → deployment_in_progress → syncing_files，最终报 `Timeout reached, aborting!`，600 秒后取消。
 
 因此不能把 API 的 `Page build failed.` 断言为编译失败或明确的体积硬拒绝。大体积可能增加部署成本，但准确证据是部署同步超时。GitHub 文档列明 [Pages 的容量与 10 分钟部署限制](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)；不保证仅移除搜索一定解决部署。
 

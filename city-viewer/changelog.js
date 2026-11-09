@@ -1,6 +1,18 @@
 /* 更新公告数据：新版本请往数组最前面加一条，report.html 会自动渲染。 */
 window.CHANGELOG = [
   {
+    version: '2.32.1',
+    date: '2026-11-09',
+    tag: '迁移',
+    title: '项目更名为 tencent-panorama-workbench',
+    items: [
+      '项目名称统一为 tencent-panorama-workbench，原名 panorama-workbench；同步更新查看器、数据报告、README 与对外文档的品牌和链接。',
+      '新站入口：https://cn171g11.github.io/tencent-panorama-workbench/；查看器与数据报告仍在 city-viewer/ 下，路径结构不变。',
+      '旧站入口（历史地址）：https://cn171g11.github.io/panorama-workbench/；请更新书签与外部引用，迁移跳转以发布后的线上验收为准。',
+      '本版仅修改品牌、链接、版本与迁移说明；各城市新增 0、删除点位 0，点位、集合、坐标精度与数据字段均不变。'
+    ]
+  },
+  {
     version: '2.32.0',
     date: '2026-11-09',
     tag: '数据',

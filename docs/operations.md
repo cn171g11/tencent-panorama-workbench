@@ -1,4 +1,4 @@
-# Operations Guide
+# tencent-panorama-workbench · Operations Guide
 
 ## Run a Viewer Locally
 
@@ -58,7 +58,7 @@ Push with a normal fast-forward update. Do not use force push for this repositor
 
 ## Authentication
 
-Git operations should use a configured credential helper or an environment-managed token. Do not store a token in this repository, shell history, README files, or scanner output. If Git opens an account selector, choose the credential entry that has access to `cn171g11/panorama-workbench`; a browser account alone is not proof that Git has a usable token.
+Git operations should use a configured credential helper or an environment-managed token. Do not store a token in this repository, shell history, README files, or scanner output. If Git opens an account selector, choose the credential entry that has access to `cn171g11/tencent-panorama-workbench`; a browser account alone is not proof that Git has a usable token.
 
 ## Release Boundary
 

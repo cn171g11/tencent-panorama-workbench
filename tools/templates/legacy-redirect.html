@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,follow">
+<meta http-equiv="refresh" content="3;url=https://cn171g11.github.io/tencent-panorama-workbench/city-viewer/">
+<link rel="canonical" href="https://cn171g11.github.io/tencent-panorama-workbench/city-viewer/">
+<title>tencent-panorama-workbench · 网站已迁移</title>
+<style>
+:root{color-scheme:light dark;font:16px/1.7 system-ui,sans-serif}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#101722;color:#e7edf6}
+main{max-width:640px;padding:32px;margin:20px;border:1px solid #344258;border-radius:16px;background:#182231;overflow-wrap:anywhere}
+h1{font-size:24px;line-height:1.4}p{color:#bdcadd}a{color:#8fc9ff}small{color:#96a7be}
+</style>
+</head>
+<body>
+<main>
+<h1>tencent-panorama-workbench</h1>
+<p>网站已迁移至新地址。街景点位数据不变，请更新收藏与链接。</p>
+<p>将在 2 秒后自动跳转；如果未跳转，请点击下方链接。</p>
+<a id="destination" href="https://cn171g11.github.io/tencent-panorama-workbench/city-viewer/">进入 tencent-panorama-workbench</a>
+<p><small>旧地址仅保留迁移提示，不再承载点位数据。</small></p>
+</main>
+<script>
+(function () {
+  'use strict';
+  var base = 'https://cn171g11.github.io/tencent-panorama-workbench/';
+  var prefix = '/panorama-workbench/';
+  var path = window.location.pathname;
+  var relative = path.indexOf(prefix) === 0 ? path.slice(prefix.length) : '';
+  // 旧区域/线路入口现统一进入全国查看器；报告及查看器深链接原样保留。
+  if (!/^city-viewer(?:\/|$)/.test(relative)) relative = 'city-viewer/';
+  var target = new URL(base + relative);
+  if (target.origin !== new URL(base).origin || !target.pathname.startsWith(new URL(base).pathname)) {
+    target = new URL('city-viewer/', base);
+  }
+  target.search = window.location.search;
+  target.hash = window.location.hash;
+  document.getElementById('destination').href = target.href;
+  document.querySelector('link[rel="canonical"]').href = target.origin + target.pathname;
+  window.setTimeout(function () { window.location.replace(target.href); }, 2000);
+}());
+</script>
+</body>
+</html>

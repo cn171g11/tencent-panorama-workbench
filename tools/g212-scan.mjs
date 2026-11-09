@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 const OVERPASS_ENDPOINT = "https://api.fairwaymapper.com/api/interpreter";
 const TENCENT_LOOKUP_URL = "https://sv.map.qq.com/xf";
 const TENCENT_DETAIL_URL = "https://sv.map.qq.com/sv";
-const USER_AGENT = "g212-panorama-workbench/1.0";
+const USER_AGENT = "tencent-panorama-workbench/g212/1.0";
 const QUERY_TIMEOUT_SECONDS = 120;
 const G212_QUERY = `[out:json][timeout:${QUERY_TIMEOUT_SECONDS}];(way["ref"~"(^|;)G212(;|$)"](18,73,54,135);rel["route"="road"]["ref"~"G212"];way(r););out geom tags;`;
 const EARTH_RADIUS_METERS = 6378245;

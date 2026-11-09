@@ -1,13 +1,15 @@
-# 街景工作台 · Panorama Workbench
+# 腾讯街景工作台 · tencent-panorama-workbench
 
 腾讯 / 百度街景**元数据**的采集、校验、整理与可视化。仓库只保存文本类元数据，不保存任何街景图片；
 线上主体是一个可按需加载的全国街景查看器。
 
+> **v2.32.1 名称与地址迁移**：项目名称统一为 `tencent-panorama-workbench`（旧名 `panorama-workbench`）。本次仅更新品牌、链接与迁移说明，点位数据不变；详见 [迁移说明](docs/project-rename-20261109.md)。
+
 | 入口 | 地址 |
 |---|---|
-| 城市查看器 | <https://cn171g11.github.io/panorama-workbench/city-viewer/> |
-| 数据报告 | <https://cn171g11.github.io/panorama-workbench/city-viewer/report.html>（各省市常规/隐藏街景数量） |
-| 仓库根路径 | <https://cn171g11.github.io/panorama-workbench/>（自动跳转到查看器） |
+| 城市查看器 | <https://cn171g11.github.io/tencent-panorama-workbench/city-viewer/> |
+| 数据报告 | <https://cn171g11.github.io/tencent-panorama-workbench/city-viewer/report.html>（各省市常规/隐藏街景数量） |
+| 仓库根路径 | <https://cn171g11.github.io/tencent-panorama-workbench/>（自动跳转到查看器） |
 | 结构说明 | [docs/repository-layout.md](docs/repository-layout.md) |
 | 数据目录 | [docs/data-catalog.md](docs/data-catalog.md) |
 | 运维手册 | [docs/operations.md](docs/operations.md) |

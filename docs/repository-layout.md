@@ -1,4 +1,4 @@
-# Repository Layout
+# tencent-panorama-workbench · Repository Layout
 
 The repository has four layers. Keeping them separate makes it easier to find a published artifact, reproduce a scan, or update a single route without touching unrelated data.
 

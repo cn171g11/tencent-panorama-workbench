@@ -35,9 +35,20 @@ DEFAULT_WORKERS = min(4, os.cpu_count() or 1)
 MANIFEST_PREFIX = "window.PANO_ASSET_MANIFEST="
 REDIRECT = b'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
-<meta http-equiv="refresh" content="0;url=city-viewer/">
-<title>Panorama Workbench</title></head>
-<body><a href="city-viewer/">Open the panorama viewer</a></body></html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="3;url=city-viewer/">
+<title>tencent-panorama-workbench</title></head>
+<body><h1>tencent-panorama-workbench</h1>
+<a id="viewer" href="city-viewer/">Open tencent-panorama-workbench</a>
+<script>
+(function () {
+  var target = new URL('city-viewer/', window.location.href);
+  target.search = window.location.search;
+  target.hash = window.location.hash;
+  document.getElementById('viewer').href = target.href;
+  window.location.replace(target.href);
+}());
+</script></body></html>
 '''
 
 
