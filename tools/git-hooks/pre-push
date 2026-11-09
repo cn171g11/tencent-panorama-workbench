@@ -1,5 +1,6 @@
 #!/bin/sh
-# pre-push：交接文档没跟上数据时拒绝推送（AGENT.md / agent_history.md 与页面版本、总量必须一致）
+# pre-push：交接文档没跟上数据时拒绝推送
+# 校验：版本号、总量、changelog 首条、记录的提交（其后不得再有改动 city-viewer/ 的提交）、时间线首行
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 [ -f "$ROOT/tools/check_handoff_docs.js" ] || exit 0
 
@@ -20,7 +21,7 @@ fi
 if ! "$NODE" "$ROOT/tools/check_handoff_docs.js" --quiet; then
   echo "" >&2
   echo "[pre-push] 推送被拒绝：交接文档没跟上数据。" >&2
-  echo "           按上面的提示更新 AGENT.md §1 与 agent_history.md §1，再重新推送。" >&2
+  echo "           按上面的提示更新 AGENT.md §1 / agent_history.md §1（必要时 §3 时间线），再重新推送。" >&2
   echo "           确认要跳过：git push --no-verify" >&2
   exit 1
 fi

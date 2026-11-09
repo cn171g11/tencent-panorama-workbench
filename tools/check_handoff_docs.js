@@ -6,10 +6,14 @@
  * agent_history.md §1 keep showing an older version / point count, so the next person (or
  * model) starts from stale numbers.
  *
- * Three things are compared:
- *   1. page version  — city-viewer/index.html  vs  AGENT.md  vs  agent_history.md
- *   2. point total   — sum of PANO_COUNT       vs  AGENT.md  vs  agent_history.md
- *   3. changelog top — city-viewer/changelog.js first entry must equal the page version
+ * Four things are compared:
+ *   1. page version   — city-viewer/index.html  vs  AGENT.md  vs  agent_history.md
+ *   2. point total    — sum of PANO_COUNT       vs  AGENT.md  vs  agent_history.md
+ *   3. changelog top  — city-viewer/changelog.js first entry must equal the page version
+ *   4. recorded HEAD  — the commit named in both docs must be an ancestor of HEAD, and no
+ *                       commit touching city-viewer/ may exist after it (doc-only or tool-only
+ *                       commits after it are fine, otherwise every commit would invalidate itself)
+ *   5. timeline order — the first versioned row of agent_history.md §3 must be the page version
  *
  * AGENT.md / agent_history.md are local-only files. When they are absent (fresh clone on
  * another machine) the check reports that it skipped instead of blocking the push.
@@ -19,6 +23,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const VIEWER = path.join(ROOT, 'city-viewer');
@@ -108,6 +113,67 @@ checkDoc(
   /\|\s*页面版本\s*\|\s*\*\*v(\d+\.\d+\.\d+)\*\*\s*\|/,
   /\|\s*街景点总数\s*\|\s*\*\*([\d,]+)\*\*\s*\|/
 );
+
+// ---------------------------------------------------------------- 记录提交与时间线顺序
+const git = (args) => {
+  try {
+    return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return null;
+  }
+};
+
+const headShort = git(['rev-parse', '--short', 'HEAD']);
+const checkRecordedHead = (file, pattern) => {
+  const source = read(path.join(ROOT, file));
+  if (source === null) return;
+  const hit = source.match(pattern);
+  if (!hit) {
+    add(`${file} 里找不到记录的提交哈希（期望指向最新数据提交）`);
+    return;
+  }
+  const recorded = hit[1];
+  if (git(['rev-parse', '--verify', '--quiet', recorded + '^{commit}']) === null) {
+    add(`${file} 记录的提交 ${recorded} 在仓库里不存在`);
+    return;
+  }
+  if (git(['merge-base', '--is-ancestor', recorded, 'HEAD']) === null) {
+    add(`${file} 记录的提交 ${recorded} 不是 HEAD 的祖先（历史被重写？）`);
+    return;
+  }
+  // 关键判据：记录之后不应再有改动 city-viewer/ 的提交
+  const laterData = git(['rev-list', '--oneline', recorded + '..HEAD', '--', 'city-viewer/']);
+  if (laterData) {
+    const count = laterData.split('\n').filter(Boolean).length;
+    add(`${file} 记录的提交 ${recorded} 之后还有 ${count} 个改动 city-viewer/ 的提交（最新数据提交应为 ${headShort}）`);
+  }
+};
+
+if (headShort) {
+  checkRecordedHead('AGENT.md', /HEAD `([0-9a-f]{7,40})`/);
+  checkRecordedHead('agent_history.md', /\|\s*HEAD\s*\|\s*`([0-9a-f]{7,40})`/);
+} else {
+  notes.push('git 不可用，跳过记录提交检查');
+}
+
+// 时间线首行必须是当前页面版本
+const history = read(path.join(ROOT, 'agent_history.md'));
+if (history) {
+  const section = history.split('## 3.')[1];
+  if (!section) {
+    add('agent_history.md 里找不到 §3 时间线');
+  } else {
+    const firstRow = section.split('\n').find((line) => /^\|\s*v\d+\.\d+\.\d+\s*\|/.test(line));
+    if (!firstRow) {
+      add('agent_history.md §3 时间线里没有任何版本行');
+    } else {
+      const version = firstRow.match(/^\|\s*(v\d+\.\d+\.\d+)\s*\|/)[1];
+      if (version !== pageVersion) {
+        add(`agent_history.md §3 首行是 ${version}，页面版本是 ${pageVersion}（时间线漏最新一条或顺序颠倒）`);
+      }
+    }
+  }
+}
 
 // ---------------------------------------------------------------- 输出
 const quiet = process.argv.includes('--quiet');
