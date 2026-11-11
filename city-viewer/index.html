@@ -75,7 +75,7 @@
 </head>
 <body>
 <header>
-  <h1>tencent-panorama-workbench <span class="ver">v2.37.0</span><span class="ver-note"> · 11.11腾讯合集审计</span></h1>
+  <h1>tencent-panorama-workbench <span class="ver">v2.38.0</span><span class="ver-note"> · OSM底图与单点六面街景</span></h1>
   <select id="provinceSelect" title="省级行政区"></select>
   <select id="citySelect" title="地级市" disabled></select>
   <select id="countySelect" title="县级行政区" style="display:none"></select>
@@ -106,6 +106,8 @@
   'use strict';
   var TENCENT_VIEWER = 'https://qq-map.netlify.app/';
   var BASEMAPS = [
+     { id:'osmStandard', label:'OSM·亮色', url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png', maxZoom:19, attribution:'© OpenStreetMap contributors', dark:false },
+     { id:'osmDark', label:'OSM·暗色', url:'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', subdomains:['a','b','c','d'], maxZoom:20, attribution:'© OpenStreetMap contributors © CARTO', dark:true },
     { id:'amapStandard', label:'高德·标准', url:'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', subdomains:['1','2','3','4'], maxZoom:18, attribution:'© 高德地图', dark:false },
     { id:'amapDark', label:'高德·暗色', url:'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', subdomains:['1','2','3','4'], maxZoom:18, attribution:'© 高德地图', dark:true },
     { id:'amapSatellite', label:'高德·影像', url:'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', subdomains:['1','2','3','4'], maxZoom:18, attribution:'© 高德地图', dark:false },
@@ -1310,7 +1312,8 @@
       +'</table>'
       +'<div class="pv-btns">'
       +'<a class="primary" href="'+esc(jump)+'" target="_blank" rel="noopener">打开街景 ↗</a>'
-      +'<button data-act="pid">复制 panoid</button>'
+      +'<button data-act="local">本地查看六面</button>'
+       +'<button data-act="pid">复制 panoid</button>'
       +'<button data-act="coord">复制坐标</button>'
       +'<button data-act="link">复制链接</button>'
       +'<button data-act="zoom">定位</button>'
@@ -1326,6 +1329,7 @@
       .openOn(map);
     var node=currentPopup.getElement();
     var jump=buildJumpUrl(e);
+    node.querySelector('[data-act="local"]').onclick=function(){ window.open('pano.html#sid='+encodeURIComponent(e[0])+'&c='+encodeURIComponent(e[6]||'')+'&d='+encodeURIComponent(e[7]||''),'_blank','noopener'); };
     node.querySelector('[data-act="pid"]').onclick=function(ev){ copyText(e[0],ev.target); };
     node.querySelector('[data-act="coord"]').onclick=function(ev){ copyText(e[2].toFixed(6)+','+e[1].toFixed(6),ev.target); };
     node.querySelector('[data-act="link"]').onclick=function(ev){ copyText(jump,ev.target); };
