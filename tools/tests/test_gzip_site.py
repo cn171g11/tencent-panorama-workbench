@@ -35,6 +35,7 @@ class GzipSiteTests(unittest.TestCase):
             "changelog.js": '/* 公告 */\r\nwindow.CHANGELOG=[];\r\n'.encode("utf-8"),
             "data_districts.js": b'window.PANO_DISTRICTS={};\n',
             "asset-loader.js": b'window.PanoAssets={};\n',
+            "pano.html": b'<!doctype html><div id="pano"></div><script>window.PANO_CUBEMAP=true;</script>',
             "asset-manifest.js": b'window.PANO_ASSET_MANIFEST=null;\n',
             # BOM / CRLF / precision / whitespace remain untouched; even bytes
             # that are not parseable JavaScript must round-trip without decoding.

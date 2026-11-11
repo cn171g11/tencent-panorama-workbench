@@ -28,7 +28,7 @@ from urllib.parse import unquote, urlsplit
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_FILES = (
     "index.html", "report.html", "changelog.js", "data_meta.js",
-    "data_districts.js", "asset-loader.js",
+    "data_districts.js", "asset-loader.js", "pano.html",
 )
 DERIVED_FILES = ("hidden_pano.js", "grid_all.js", "pano_search_index.js")
 CHUNK_SIZE = 1024 * 1024
