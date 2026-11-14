@@ -4,6 +4,10 @@ The repository has four layers. Keeping them separate makes it easier to find a 
 
 ## Published Site
 
+The committed `city-viewer/` retains raw metadata/data scripts. The actual Pages artifact is an independent `dist/pages` containing small frontend/metadata, verified `.js.br` assets and a v2 Brotli manifest; no duplicate raw/gzip point files. The browser loader still accepts legacy gzip/v1 artifacts. See [Brotli publication](<brotli-publication-20261115.md>).
+
+The publication also ships [brotli-decoder.js](<../city-viewer/brotli-decoder.js>), [brotli-worker.js](<../city-viewer/brotli-worker.js>) and the pinned local [WebAssembly/third-party license](<../city-viewer/vendor/brotli-wasm/NOTICE.md>). Decoder resources are loaded only when Brotli data need decoding; raw source-checkout mode keeps a null asset manifest.
+
 - `index.html`: redirect page to `city-viewer/` (keeps the Pages root working).
 - `city-viewer/`: national city metadata viewer and its browser-loadable data files.
 - `g101/`, `g102/`, `g103/`, `g106/`, `g312/`: route viewers and their metadata.

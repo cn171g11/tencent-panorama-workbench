@@ -1,5 +1,7 @@
 # 原始数据保留、gzip 发布与搜索恢复（v2.28.0）
 
+> 本文记录2026-11-07的历史gzip架构与实测，不是最新容量或唯一编码要求。2026-11-15全量发布正在迁移为Brotli v2清单，加载器保留gzip v1兼容；现行方案与完成证据见 [Brotli发布说明](<brotli-publication-20261115.md>)。
+
 ## 发布架构
 
 - Git 仓库继续保留原始点位 [分片目录](../city-viewer/)；经纬度、道路、日期、方向、标志和 SID 不舍入、不转换。搜索索引为可再生文件，生成后忽略入库。
@@ -55,7 +57,7 @@
 ## 构建与回滚
 
 ```powershell
-node --max-old-space-size=6144 tools/build_viewer_index.js --with-search
+node --max-old-space-size=768 --expose-gc tools/build_viewer_index.js --with-search
 node tools/check_viewer_hidden_grid.js
 node tools/check_viewer_display_mode.js
 node tools/check_viewer_search.js

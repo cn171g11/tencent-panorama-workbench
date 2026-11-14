@@ -11,6 +11,9 @@ The national viewer consumes JavaScript data files from `city-viewer/`.
 | `grid_all.js` | Pre-aggregated cells used by overview and density rendering |
 | `data_<adcode>.js` | Point arrays loaded on demand for a city or region |
 | `index.html` | Viewer application |
+| [asset-manifest.js](<../city-viewer/asset-manifest.js>) | Null for raw checkout; Brotli v2 compressed/original sizes and SHA-256 in publication, legacy gzip v1 remains supported |
+| [asset-loader.js](<../city-viewer/asset-loader.js>) | Same-origin verified compressed loading, bounded decode and retry |
+| [brotli-decoder.js](<../city-viewer/brotli-decoder.js>) / [brotli-worker.js](<../city-viewer/brotli-worker.js>) | Lazy native-or-local-WASM Brotli decode; source point JSON bytes are unchanged |
 
 Each point array uses this shape:
 

@@ -1,9 +1,14 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { createHash } = require('node:crypto');
-const { gzipSync } = require('node:zlib');
+const { gzipSync, brotliCompressSync } = require('node:zlib');
 const { readFileSync } = require('node:fs');
 const vm = require('node:vm');
+const { pathToFileURL } = require('node:url');
+const { decodeWithModule } = require('../../city-viewer/brotli-worker.js');
+const brotliPromise = import(new URL('../../city-viewer/vendor/brotli-wasm/brotli_wasm.mjs', pathToFileURL(__filename)).href)
+  .then(async (brotli) => { await brotli.default(readFileSync(new URL('../../city-viewer/vendor/brotli-wasm/brotli_wasm_bg.wasm', pathToFileURL(__filename)))); return brotli; });
+const actualBrotli = { decode: async (input, size) => decodeWithModule(await brotliPromise, input, size) };
 const { createLoader } = require('../../city-viewer/asset-loader.js');
 
 // Only fixture generation and the document stub use Node helpers. The loader
@@ -31,6 +36,15 @@ function manifestFor(files) {
   return { version: 1, codec: 'gzip', files: Object.fromEntries(
     Object.entries(files).map(([name, data]) => [name, entry(name, data)])) };
 }
+function brotliFixture(source = SOURCE) {
+  const raw = Buffer.from(source, 'utf8');
+  return { raw, brotli: brotliCompressSync(raw) };
+}
+function brotliManifestFor(files) {
+  return { version: 2, codec: 'brotli', files: Object.fromEntries(Object.entries(files).map(([name, data]) => [name,
+    { url: name + '.br', bytes: data.raw.length, compressedBytes: data.brotli.length,
+      sha256: sha(data.raw), compressedSha256: sha(data.brotli) }])) };
+}
 function eventBus(target) {
   const listeners = new Map();
   target.addEventListener = (type, callback) => {
@@ -45,7 +59,8 @@ function eventBus(target) {
   return target;
 }
 function harness(options = {}) {
-  const files = options.files || { 'data_test.js': fixture() };
+  const brotliMode = options.brotli || options.manifest?.codec === 'brotli';
+  const files = options.files || { 'data_test.js': brotliMode ? brotliFixture() : fixture() };
   const blobs = new Map();
   const created = [];
   const revoked = [];
@@ -54,7 +69,8 @@ function harness(options = {}) {
   const stubFailures = [];
   const window = eventBus({ location: { href: options.pageURL || PAGE } });
   if (!options.absentManifest) {
-    window.PANO_ASSET_MANIFEST = Object.hasOwn(options, 'manifest') ? options.manifest : manifestFor(files);
+    window.PANO_ASSET_MANIFEST = Object.hasOwn(options, 'manifest') ? options.manifest :
+      (brotliMode ? brotliManifestFor(files) : manifestFor(files));
   }
   class StubURL extends URL {
     static createObjectURL(blob) {
@@ -114,12 +130,13 @@ function harness(options = {}) {
   document.head = head;
   const environment = {
     window, document, Blob, URL: StubURL, crypto: globalThis.crypto, DecompressionStream,
+    Brotli: brotliMode ? actualBrotli : undefined,
     fetch: async (url, init) => {
       fetchCalls.push({ url, init });
       if (options.fetch) return options.fetch(url, init);
       const name = new URL(url).pathname.split('/').pop().slice(0, -3);
       const data = files[name];
-      return data ? new Response(options.httpDecoded ? data.raw : data.gzip,
+      return data ? new Response(options.httpDecoded ? data.raw : (brotliMode ? data.brotli : data.gzip),
         { headers: options.headers || {} }) : new Response('', { status: 404 });
     },
     ...options.environment
@@ -598,6 +615,187 @@ test('Blob creation failures are friendly, remove inflight state and permit retr
   h.assertClean();
   await h.loader.loadScript('data_test.js');
   assert.equal(attempts, 2);
+  h.assertClean();
+});
+
+test('v2 Brotli verifies compressed hash before actual shared WASM decoding and executes exact source bytes', async () => {
+  const hashes = [], decoded = [];
+  const h = harness({ brotli: true, environment: {
+    crypto: { subtle: { digest: async (algorithm, bytes) => { hashes.push(Buffer.from(bytes)); return globalThis.crypto.subtle.digest(algorithm, bytes); } } },
+    Brotli: { decode: async (bytes, size) => { decoded.push(Buffer.from(bytes)); assert.equal(hashes.length, 1); return actualBrotli.decode(bytes, size); } }
+  } });
+  await h.loader.loadScript('data_test.js');
+  const data = h.files['data_test.js'];
+  assert.deepEqual(hashes, [data.brotli, data.raw]);
+  assert.deepEqual(decoded, [data.brotli]);
+  assert.deepEqual(Buffer.from(await h.created[0].blob.arrayBuffer()), data.raw);
+  assert.equal(h.window.PANO_CITY.test[0][0], SID);
+  assert.equal(h.window.PANO_CITY.test[0][1], 121.123456789012345);
+  assert.equal(h.fetchCalls[0].url, new URL('data_test.js.br', PAGE).href);
+  h.assertClean();
+});
+
+test('v2 HTTP-decoded bytes require exact raw size/hash without headers and never invoke Brotli/WASM', async () => {
+  for (const headers of [{}, { 'Content-Encoding': 'br', 'Content-Length': '1' }]) {
+    const hashes = [];
+    const h = harness({ brotli: true, httpDecoded: true, headers, environment: {
+      Brotli: { decode() { assert.fail('HTTP-decoded raw bytes must not invoke WASM'); } },
+      crypto: { subtle: { digest: async (algorithm, bytes) => { hashes.push(Buffer.from(bytes)); return globalThis.crypto.subtle.digest(algorithm, bytes); } } }
+    } });
+    await h.loader.loadScript('data_test.js');
+    assert.deepEqual(hashes, [h.files['data_test.js'].raw]);
+    h.assertClean();
+  }
+});
+
+test('v2 Brotli size/hash classification checks compressed bytes even when raw and compressed sizes are equal', async () => {
+  const data = brotliFixture('a'.repeat(10));
+  assert.equal(data.raw.length, data.brotli.length);
+  for (const httpDecoded of [false, true]) {
+    let decodes = 0;
+    const h = harness({ brotli: true, files: { 'data_test.js': data }, httpDecoded,
+      execute: (script) => script.onload?.({ target: script }),
+      environment: { Brotli: { decode: async (...args) => { decodes++; return actualBrotli.decode(...args); } } } });
+    await h.loader.loadScript('data_test.js');
+    assert.equal(decodes, httpDecoded ? 0 : 1);
+    assert.deepEqual(Buffer.from(await h.created[0].blob.arrayBuffer()), data.raw);
+    h.assertClean();
+  }
+});
+
+test('v2 Brotli never trusts Content-Length/Encoding to skip compressed hash and rejects wrong hashes before decoder', async () => {
+  const data = brotliFixture();
+  const manifest = brotliManifestFor({ 'data_test.js': data });
+  manifest.files['data_test.js'].compressedSha256 = '0'.repeat(64);
+  let decodes = 0;
+  const h = harness({ brotli: true, files: { 'data_test.js': data }, manifest,
+    headers: { 'Content-Encoding': 'br', 'Content-Length': String(data.raw.length) },
+    environment: { Brotli: { decode() { decodes++; assert.fail('corrupt hash cannot decode'); } } } });
+  await assert.rejects(h.loader.loadScript('data_test.js'), /压缩文件 SHA-256/);
+  assert.equal(decodes, 0);
+  assert.equal(h.scripts.length, 0);
+  h.assertClean();
+});
+
+test('v2 Brotli compressed and HTTP-decoded paths fail closed on invalid raw hashes or byte counts', async () => {
+  for (const httpDecoded of [false, true]) {
+    for (const override of [{ sha256: '0'.repeat(64) }, { bytes: 1 }, { bytes: 1000 }]) {
+      const data = brotliFixture();
+      const manifest = brotliManifestFor({ 'data_test.js': data });
+      Object.assign(manifest.files['data_test.js'], override);
+      const h = harness({ brotli: true, manifest, files: { 'data_test.js': data }, httpDecoded });
+      await assert.rejects(h.loader.loadScript('data_test.js'), /SHA-256|原始大小|压缩大小/);
+      assert.equal(h.scripts.length, 0);
+      h.assertClean();
+    }
+  }
+});
+
+test('v2 correct compressed hashes still reject actual WASM corruption, truncation, trailing data and overflow', async () => {
+  const valid = brotliFixture();
+  for (const compressed of [Buffer.from([255, 255, 255, 255]), valid.brotli.subarray(0, -1),
+    Buffer.concat([valid.brotli, Buffer.from([0])])]) {
+    const data = { raw: valid.raw, brotli: compressed };
+    const h = harness({ brotli: true, files: { 'data_test.js': data } });
+    await assert.rejects(h.loader.loadScript('data_test.js'), /Brotli 解压失败/);
+    assert.equal(h.scripts.length, 0);
+    h.assertClean();
+  }
+});
+
+test('v2 manifest schema strictly requires brotli, compressedSha256 and same-origin corresponding .js.br URL', async () => {
+  const data = brotliFixture();
+  for (const override of [{ compressedSha256: null }, { compressedSha256: 'ab' }, { compressedBytes: 0 },
+    { bytes: 0x100000000 }, { compressedBytes: 0x100000000 }, { url: 'data_test.js.gz' },
+    { url: '../data_test.js.br' }, { url: 'https://evil.test/data_test.js.br' }, { url: 'data_test.js.br?q=1' },
+    { url: 'data_test.js.br#x' }, { url: 'https://u:p@example.test/project/city-viewer/data_test.js.br' }]) {
+    const manifest = brotliManifestFor({ 'data_test.js': data });
+    Object.assign(manifest.files['data_test.js'], override);
+    const h = harness({ brotli: true, manifest, files: { 'data_test.js': data } });
+    await assert.rejects(h.loader.loadScript('data_test.js'), /清单的大小|URL 必须/);
+    assert.equal(h.fetchCalls.length, 0);
+    h.assertClean();
+  }
+  const h = harness({ brotli: true, manifest: { version: 2, codec: 'gzip', files: {} } });
+  await assert.rejects(h.loader.loadScript('data_test.js'), /清单格式/);
+  h.assertClean();
+});
+
+test('v2 unknown same-sized bytes never execute or decode and missing decoder remains explicit', async () => {
+  const data = brotliFixture();
+  const h = harness({ brotli: true, fetch: async () => new Response(Buffer.alloc(data.brotli.length)),
+    environment: { Brotli: { decode() { assert.fail('unknown bytes'); } } } });
+  await assert.rejects(h.loader.loadScript('data_test.js'), /压缩文件 SHA-256/);
+  assert.equal(h.scripts.length, 0);
+  h.assertClean();
+  const missing = harness({ brotli: true, environment: { Brotli: undefined } });
+  await assert.rejects(missing.loader.loadScript('data_test.js'), /本地 Brotli 解码器不可用/);
+  missing.assertClean();
+});
+
+test('single-read response bound cancels overlarge payloads before hash/decode, and rejects unbounded-only APIs', async () => {
+  const data = brotliFixture();
+  let cancelled = 0, hashes = 0, reads = 0;
+  const h = harness({ brotli: true, fetch: async () => ({ ok: true, body: new ReadableStream({
+    pull(controller) { reads++; controller.enqueue(Buffer.alloc(Math.max(data.raw.length, data.brotli.length) + 1)); },
+    cancel() { cancelled++; }
+  }) }), environment: { crypto: { subtle: { digest() { hashes++; assert.fail('oversized body cannot hash'); } } } } });
+  await assert.rejects(h.loader.loadScript('data_test.js'), /大小.*超出清单/);
+  assert.equal(cancelled, 1);
+  assert.ok(reads <= 2);
+  assert.equal(hashes, 0);
+  h.assertClean();
+  const unbounded = harness({ brotli: true, fetch: async () => ({ ok: true, arrayBuffer() { assert.fail('never unbounded arrayBuffer'); } }) });
+  await assert.rejects(unbounded.loader.loadScript('data_test.js'), /有界流式下载.*更新/);
+  unbounded.assertClean();
+});
+
+test('v2 SHA/decode failures clear inflight state and retry, successes have no completed cache', async () => {
+  const data = brotliFixture();
+  let requests = 0, decodes = 0;
+  const h = harness({ brotli: true, fetch: async () => new Response(++requests === 1 ? Buffer.alloc(data.brotli.length) : data.brotli),
+    environment: { Brotli: { decode: async (...args) => { if (++decodes === 1) throw new Error('temporary worker failure'); return actualBrotli.decode(...args); } } } });
+  await assert.rejects(h.loader.loadScript('data_test.js'), /SHA-256/);
+  await assert.rejects(h.loader.loadScript('data_test.js'), /temporary worker failure/);
+  const first = h.loader.loadScript('data_test.js');
+  assert.equal(first, h.loader.loadScript('data_test.js'));
+  await first;
+  delete h.window.PANO_CITY.test;
+  const next = h.loader.loadScript('data_test.js');
+  assert.notEqual(first, next);
+  await next;
+  assert.equal(requests, 4);
+  assert.equal(decodes, 3);
+  assert.equal(h.scripts.length, 2);
+  h.assertClean();
+});
+
+test('v2 Brotli keeps two full pipelines including script execution, queued snapshot and inflight dedup', async () => {
+  const names = ['data_a.js', 'data_b.js', 'data_c.js'];
+  const data = brotliFixture('window.executions=(window.executions||0)+1;');
+  const files = Object.fromEntries(names.map((name) => [name, data]));
+  const inserted = names.map(defer), executeGates = names.map(defer);
+  let executions = 0, decodes = 0, active = 0, maximum = 0;
+  const h = harness({ brotli: true, files,
+    environment: { Brotli: { decode: async (...args) => {
+      maximum = Math.max(maximum, ++active); decodes++;
+      try { return await actualBrotli.decode(...args); } finally { active--; }
+    } } },
+    execute: async (script, run) => { const index = executions++; inserted[index].resolve(); await executeGates[index].promise; run(); } });
+  const promises = names.map(h.loader.loadScript);
+  assert.equal(promises[2], h.loader.loadScript(names[2]));
+  try {
+    await Promise.all([inserted[0].promise, inserted[1].promise]);
+    assert.equal(h.fetchCalls.length, 2);
+    h.window.PANO_ASSET_MANIFEST = null;
+    executeGates[0].resolve();
+    await inserted[2].promise;
+    assert.equal(h.fetchCalls.length, 3);
+  } finally { executeGates.forEach((gate) => gate.resolve()); await Promise.all(promises); }
+  assert.equal(decodes, 3);
+  assert.ok(maximum <= 2);
+  assert.equal(h.window.executions, 3);
+  assert.ok(h.scripts.every((script) => script.src.startsWith('blob:')));
   h.assertClean();
 });
 

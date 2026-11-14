@@ -3,7 +3,7 @@
 腾讯 / 百度街景**元数据**的采集、校验、整理与可视化。仓库只保存文本类元数据，不保存任何街景图片；
 线上主体是一个可按需加载的全国街景查看器。
 
-> **v2.43.0 11.14合集审计分流**：源39,093唯一SID，排除1,156已有，新增隐藏 **37,779**、常规 **158**，全库 **55,064,783** 点。原始SID、旧JSON行与坐标精度保留，常规点不丢弃；详见 [城市级审计增量](docs/gap-import-20261115-1114.md)。
+> **v2.45.0 全量Brotli发布迁移与山东常规入图**：山东16城免移动性审计新增 **4,371,657** 个SID，全国 **59,436,440** 点。完整gzip站点实测超原1GB门槛6,123,246B，因此按用户授权先迁移Brotli再推送；原始点位JSON、SID和坐标精度不变。详见 [山东城市增量](<docs/regular-import-20261115-shandong.md>) 与 [Brotli发布/验收说明](<docs/brotli-publication-20261115.md>)。
 >
 > 项目使用 `tencent-panorama-workbench` 新名称与地址；旧名 `panorama-workbench` 的迁移记录见 [迁移说明](docs/project-rename-20261109.md)。
 
@@ -24,15 +24,15 @@
 
 | 指标 | 数值 |
 |---|---|
-| 街景点总数 | **55,064,783**（含独立游戏15点） |
-| 数据分片 | 508个点位 `data_*.js`（不含meta/districts），906个集合键（含398个隐藏集合） |
+| 街景点总数 | **59,436,440**（含独立游戏15点） |
+| 数据分片 | 523个点位 `data_*.js`（不含meta/districts），921个集合键（含398个隐藏集合） |
 | 省级行政区 | 32 个（不计独立游戏集合） |
 | 区县边界 | 2,564 个（覆盖 297 个地级/城市键；7 个特殊管理单元无独立区县边界） |
 | 腾讯隐藏街景 / 时光机 | **583,446** 点（397个地理隐藏集合，另含独立游戏15点） |
 | 腾讯常规补充集合 | 854 点（不含已归并进城市层的常规街景） |
 
-> 2026-11-02 的历史批次曾按 svid 内嵌日期回填采集时间，当时覆盖约99%；这不是当前全库覆盖率。四川本批按原始JSON保留源日期空值，不新增回填或改写字段，详情面板展示已有采集时间。
-> **v2.31.0 常规街景支持二级行政区筛选**：通过 297 个城市、2,564 个二级行政区边界提供省→市→区县查看；特殊管理单元无独立县级边界时保留城市级“全部”。全局搜索与 gzip 无损发布仍按原流程工作，仓库保留原始点位分片，浏览器校验压缩资源后按需加载。详见 [区县筛选说明](docs/district-filter-20261108.md) 与 [gzip 发布说明](docs/gzip-publication-20261107.md)。
+> 2026-11-02 的历史批次曾按 svid 内嵌日期回填采集时间，当时覆盖约99%；这不是当前全库覆盖率。四川与山东常规批次按原始JSON保留源日期空值，不新增回填或改写字段，详情面板展示已有采集时间。
+> **v2.31.0 常规街景支持二级行政区筛选**：通过 297 个城市、2,564 个二级行政区边界提供省→市→区县查看；特殊管理单元无独立县级边界时保留城市级“全部”。全局搜索与无损发布继续保留原始数据；现行发布迁移为Brotli v2清单，浏览器逐文件校验大小／两层SHA，旧gzip v1仍兼容。详见 [区县筛选说明](<docs/district-filter-20261108.md>)、[Brotli发布说明](<docs/brotli-publication-20261115.md>) 与 [历史gzip记录](<docs/gzip-publication-20261107.md>)。
 
 点位最多的省级行政区：
 
@@ -40,6 +40,7 @@
 |---|---|
 | 江苏省 | 6,483,703 |
 | 浙江省 | 5,340,826 |
+| 山东省 | 4,490,319 |
 | 上海市 | 3,772,298 |
 | 北京市 | 3,411,158 |
 | 河北省 | 2,679,008 |
@@ -68,7 +69,6 @@
 | 西藏自治区 | 474,740 |
 | 香港特别行政区 | 374,779 |
 | 青海省 | 308,070 |
-| 山东省 | 118,662 |
 | 广东省 | 45,276 |
 
 > 江苏、上海是早年网格扫描的主体；浙江、福建、安徽、广西、宁夏是近期按地级市全量重扫的结果；
@@ -99,11 +99,12 @@
 | `data_<adcode>.js` | `PANO_CITY[key]` 点位数组，超过 18 万点拆分为 `<adcode>_2`、`_3`… |
 | `grid_all.js` | 全国网格聚合（0.004°），供总览与密度模式使用 |
 | 全局点位搜索 | 已恢复；搜索索引在发布层压缩，查询时按需解压加载 |
-| [asset-loader.js](city-viewer/asset-loader.js) | 同源 gzip 解压、大小/SHA-256 校验、并发限制及重试 |
+| [asset-loader.js](<city-viewer/asset-loader.js>) | 同源Brotli/gzip解压、原始/压缩大小与SHA-256校验、并发限制及重试 |
+| [brotli-decoder.js](<city-viewer/brotli-decoder.js>)、[brotli-worker.js](<city-viewer/brotli-worker.js>) | 按需原生或固定本地WASM流式解码，完成/失败释放工作线程 |
 | [asset-manifest.js](city-viewer/asset-manifest.js) | 源码检出时为 null；发布构建替换为全部压缩资源清单 |
 | `hidden_pano.js` | 「腾讯隐藏街景/时光机」合集（独立集合，不按城市拆分） |
 
-点位格式固定为 9 个字段，只允许在末尾追加新字段：
+点位通常为9字段，既有8字段历史行继续有效；不为编码迁移补造或重写字段，只允许在末尾追加新字段：
 
 ```text
 [panoid, lng, lat, road, captured, dir, has_thumb, has_pano, source]
@@ -153,8 +154,8 @@
    只有不可移动的才允许进入隐藏合集；可移动的转投常规集合。
 6. **合并入图**：`tools/merge_gap_scan.py` / `tools/merge_city_scan.py` 写入分片并更新 `data_meta.js`。
 7. **重建派生索引**：`node --max-old-space-size=768 --expose-gc tools/build_viewer_index.js --with-search` 重算网格和完整搜索索引，原始城市点位不变。
-8. **校验与压缩发布**：运行 hidden-grid、display-mode、search、SID 唯一性与单元测试；`python tools/build_gzip_site.py --output dist/pages` 在全新输出目录逐分片 gzip9 并逐块回读比对。发布目录不含大型原始 JS 副本。
-9. **上传**：[专用 Pages 工作流](.github/workflows/pages.yml) 仅上传 `dist/pages`，不上传本地交接文件、测试浏览器目录或原始搜索索引；线上仍须核对版本和实际解压加载。
+8. **校验与无损压缩发布**：按顺序运行 hidden-grid、display-mode、search、disk-256 SID唯一性和fixtures；`python tools/build_gzip_site.py --output dist/pages --codec brotli --node node --workers 2 --brotli-quality 11 --brotli-lgwin 22`在全新目录完整逐字节回读验证，不额外发布原始大JS或重复gzip副本。
+9. **上传与上线验收**：[专用 Pages 工作流](<.github/workflows/pages.yml>)只上传独立发布目录，保留1,000,000,000B门槛；同SHA部署成功后还须实际下载原始/压缩哈希并核对全批新SID和真实浏览器。旧gzip产物仍由加载器兼容；[Brotli迁移说明](<docs/brotli-publication-20261115.md>)记录参数和限制。
 
 版本号写在 `city-viewer/index.html` 标题里，每次发布递增；按用户决定不再打包 APK 或发布 GitHub Releases。
 
@@ -165,7 +166,9 @@
 | 工具 | 用途 |
 |---|---|
 | [tools/build_viewer_index.js](tools/build_viewer_index.js) | 重建网格；压缩发布前显式使用 `--with-search` 生成搜索索引 |
-| [tools/build_gzip_site.py](tools/build_gzip_site.py) | 保留源数据、构建独立 gzip 发布目录，逐字节/SHA-256 验证 |
+| [tools/build_gzip_site.py](<tools/build_gzip_site.py>) | 保留源字节，构建Brotli v2（兼容gzip v1）独立发布目录并逐字节/SHA验证 |
+| [tools/brotli_asset_codec.cjs](<tools/brotli_asset_codec.cjs>) | 现有Node原生流式Brotli压缩／验证，拒绝截断和尾随流 |
+| [tools/decode_brotli_asset.cjs](<tools/decode_brotli_asset.cjs>) | 线上下载文件的有界Brotli解压、双SHA/大小与尾随检查 |
 | [tools/check_viewer_search.js](tools/check_viewer_search.js) | 回归验证搜索、地理/道路过滤与隐藏/游戏标记 |
 | [tools/check_viewer_sid_unique.py](tools/check_viewer_sid_unique.py) | 全库 SID 唯一性、计数与注册游戏集合的实际源数据校验 |
 | [tools/check_gzip_browser.js](tools/check_gzip_browser.js) | 实际浏览器验证压缩请求、搜索、坐标精度与多宽度布局 |

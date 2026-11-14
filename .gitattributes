@@ -10,3 +10,5 @@
 *.json -text
 *.geojson -text
 *.py text eol=lf
+# Preserve the exact pinned upstream module, including its original final blank line.
+city-viewer/vendor/brotli-wasm/brotli_wasm.mjs -text whitespace=-blank-at-eof

@@ -12,7 +12,8 @@
       crypto: root.crypto,
       DecompressionStream: root.DecompressionStream,
       Blob: root.Blob,
-      URL: root.URL
+      URL: root.URL,
+      Brotli: root.PanoBrotli
     });
   }
 }(typeof window !== 'undefined' ? window : globalThis, function createLoader(environment) {
@@ -68,19 +69,22 @@
     if (manifest === undefined || manifest === null) {
       return { name: name, rawURL: new URLClass(name, baseURL).href };
     }
-    if (!manifest || manifest.version !== 1 || manifest.codec !== 'gzip' ||
+    var isGzip = manifest && manifest.version === 1 && manifest.codec === 'gzip';
+    var isBrotli = manifest && manifest.version === 2 && manifest.codec === 'brotli';
+    if ((!isGzip && !isBrotli) ||
         !manifest.files || typeof manifest.files !== 'object' || Array.isArray(manifest.files)) {
-      throw fail(name, '压缩资源清单格式不受支持（需要 version: 1、codec: gzip）。');
+      throw fail(name, '压缩资源清单格式不受支持（需要 version: 1/codec: gzip 或 version: 2/codec: brotli）。');
     }
     if (!own.call(manifest.files, name)) {
       throw fail(name, '压缩资源清单中缺少此文件；为避免混用版本，不会回退到原始脚本。');
     }
     var entry = manifest.files[name];
-    if (!entry || typeof entry !== 'object' ||
-        !Number.isSafeInteger(entry.bytes) || entry.bytes < 0 ||
-        !Number.isSafeInteger(entry.compressedBytes) || entry.compressedBytes < 2 ||
+    var compressedHash = entry && (isGzip ? entry.gzipSha256 : entry.compressedSha256);
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) ||
+        !Number.isSafeInteger(entry.bytes) || entry.bytes < 0 || entry.bytes > 0xffffffff ||
+        !Number.isSafeInteger(entry.compressedBytes) || entry.compressedBytes < (isGzip ? 2 : 1) || entry.compressedBytes > 0xffffffff ||
         typeof entry.sha256 !== 'string' || !/^[a-fA-F0-9]{64}$/.test(entry.sha256) ||
-        typeof entry.gzipSha256 !== 'string' || !/^[a-fA-F0-9]{64}$/.test(entry.gzipSha256) ||
+        typeof compressedHash !== 'string' || !/^[a-fA-F0-9]{64}$/.test(compressedHash) ||
         typeof entry.url !== 'string' || !entry.url) {
       throw fail(name, '压缩资源清单的大小、SHA-256 或 URL 无效。');
     }
@@ -88,28 +92,83 @@
     try { url = new URLClass(entry.url, baseURL); } catch (error) {
       throw fail(name, '压缩资源 URL 无效。', error);
     }
-    var expected = new URLClass(name + '.gz', baseURL);
+    var expected = new URLClass(name + (isGzip ? '.gz' : '.br'), baseURL);
     if (!/^https?:$/.test(url.protocol) || url.origin !== baseURL.origin ||
         url.pathname !== expected.pathname || url.username || url.password || url.search || url.hash) {
-      throw fail(name, '压缩资源 URL 必须是同源、同目录的对应 .js.gz 文件。');
+      throw fail(name, '压缩资源 URL 必须是同源、同目录的对应 ' + (isGzip ? '.js.gz' : '.js.br') + ' 文件。');
     }
     // Snapshot only validated metadata: queued requests cannot change to raw fallback.
     return { name: name, url: url.href, bytes: entry.bytes, compressedBytes: entry.compressedBytes,
-      sha256: entry.sha256.toLowerCase(), gzipSha256: entry.gzipSha256.toLowerCase() };
+      codec: isGzip ? 'gzip' : 'brotli', sha256: entry.sha256.toLowerCase(),
+      compressedSha256: compressedHash.toLowerCase() };
   }
 
-  async function checkHash(bytes, expected, name, kind) {
+  function isBytes(value) {
+    return ArrayBuffer.isView(value) && Object.prototype.toString.call(value) === '[object Uint8Array]';
+  }
+
+  async function hashBytes(bytes, name) {
     var digest;
     try { digest = await env.crypto.subtle.digest('SHA-256', bytes); } catch (error) {
       throw fail(name, '无法进行 SHA-256 校验；请使用 HTTPS/localhost 并更新浏览器/WebView。', error);
     }
-    var hash = Array.from(new Uint8Array(digest), function (value) {
+    return Array.from(new Uint8Array(digest), function (value) {
       return value.toString(16).padStart(2, '0');
     }).join('');
-    if (hash !== expected) throw fail(name, kind + ' SHA-256 校验失败，文件可能损坏或版本不一致。');
+  }
+
+  async function checkHash(bytes, expected, name, kind) {
+    if (await hashBytes(bytes, name) !== expected) {
+      throw fail(name, kind + ' SHA-256 校验失败，文件可能损坏或版本不一致。');
+    }
+  }
+
+  async function readResponse(response, spec) {
+    if (!response.body || typeof response.body.getReader !== 'function') {
+      throw fail(spec.name, '当前浏览器/WebView 不支持有界流式下载，请更新浏览器/WebView。');
+    }
+    var reader = response.body.getReader();
+    var chunks = [];
+    var total = 0;
+    var maximum = Math.max(spec.bytes, spec.compressedBytes);
+    try {
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        if (!isBytes(chunk.value) || chunk.value.byteLength > maximum - total) {
+          throw fail(spec.name, '响应的原始大小或压缩大小超出清单，文件可能损坏。');
+        }
+        total += chunk.value.byteLength;
+        chunks.push(chunk.value);
+      }
+      var bytes = new Uint8Array(total);
+      var offset = 0;
+      chunks.forEach(function (chunk) { bytes.set(chunk, offset); offset += chunk.byteLength; });
+      chunks.length = 0;
+      return bytes;
+    } catch (error) {
+      try { await reader.cancel(); } catch (cancelError) { /* Keep original failure. */ }
+      throw error;
+    } finally {
+      chunks.length = 0;
+      reader.releaseLock();
+    }
   }
 
   async function decompress(bytes, spec) {
+    if (spec.codec === 'brotli') {
+      var brotli = env.Brotli || (win && win.PanoBrotli);
+      if (!brotli || typeof brotli.decode !== 'function') {
+        throw fail(spec.name, '本地 Brotli 解码器不可用，请确认 brotli-decoder.js 已加载并更新浏览器/WebView。');
+      }
+      try {
+        var decoded = await brotli.decode(bytes, spec.bytes);
+        if (!isBytes(decoded) || decoded.byteLength !== spec.bytes) {
+          throw new Error('Brotli 解压后的原始大小与清单不一致。');
+        }
+        return decoded;
+      } catch (error) { throw fail(spec.name, 'Brotli 解压失败：' + (error && error.message || '压缩文件可能损坏。'), error); }
+    }
     if (typeof env.DecompressionStream !== 'function' ||
         !BlobClass.prototype || typeof BlobClass.prototype.stream !== 'function') {
       throw fail(spec.name, '当前浏览器/WebView 不支持 gzip 解压（DecompressionStream），请更新浏览器/WebView。');
@@ -229,26 +288,43 @@
       if (!response || !response.ok || response.type === 'opaque') {
         throw fail(spec.name, '压缩资源请求失败（HTTP ' + (response && response.status) + '）。');
       }
-      if (response.url && new URLClass(response.url).origin !== baseURL.origin) {
-        throw fail(spec.name, '压缩资源响应不是同源 URL。');
+      if (response.url && response.url !== spec.url) {
+        throw fail(spec.name, '压缩资源响应不是同源 URL 或不是对应的压缩文件。');
       }
-      received = new Uint8Array(await response.arrayBuffer());
+      received = await readResponse(response, spec);
     } catch (error) {
       if (error && /^资源 /.test(error.message)) throw error;
       throw fail(spec.name, '无法下载压缩资源，请检查网络后重试。', error);
     }
     var raw;
-    // Content-Encoding can be decoded by fetch itself. Inspect bytes, not headers;
-    // never double-decode an already decoded response or trust its Content-Length.
-    if (received[0] === 0x1f && received[1] === 0x8b) {
+    var rawHashChecked = false;
+    // Brotli has no magic bytes. Classify only by exact size AND hash, never by
+    // Content-Encoding/Content-Length (fetch may already have decoded the body).
+    if (spec.codec === 'brotli') {
+      var isCompressedSize = received.byteLength === spec.compressedBytes;
+      var isRawSize = received.byteLength === spec.bytes;
+      if (!isCompressedSize && !isRawSize) {
+        throw fail(spec.name, '原始大小或压缩大小与清单不一致。');
+      }
+      var receivedHash = await hashBytes(received, spec.name);
+      if (isCompressedSize && receivedHash === spec.compressedSha256) {
+        raw = await decompress(received, spec);
+      } else if (isRawSize && receivedHash === spec.sha256) {
+        raw = received;
+        rawHashChecked = true;
+      } else {
+        throw fail(spec.name, (isCompressedSize ? '压缩文件' : '原始文件') + ' SHA-256 校验失败，文件可能损坏或版本不一致。');
+      }
+    } else if (received[0] === 0x1f && received[1] === 0x8b) {
       if (received.byteLength !== spec.compressedBytes) throw fail(spec.name, '压缩大小与清单不一致。');
-      await checkHash(received, spec.gzipSha256, spec.name, '压缩文件');
+      await checkHash(received, spec.compressedSha256, spec.name, '压缩文件');
       raw = await decompress(received, spec);
     } else {
       raw = received;
       if (raw.byteLength !== spec.bytes) throw fail(spec.name, '原始大小与清单不一致（响应可能已被 HTTP 解压或已损坏）。');
     }
-    await checkHash(raw, spec.sha256, spec.name, '原始文件');
+    if (!rawHashChecked) await checkHash(raw, spec.sha256, spec.name, '原始文件');
+    received = null;
     // Keep exact source bytes, including numeric literals and string IDs. No
     // JSON parse/stringify, coordinate rounding, TextDecoder, eval or new Function.
     var objectURL;

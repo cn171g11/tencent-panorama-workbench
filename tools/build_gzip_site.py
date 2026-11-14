@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Build an independent, byte-preserving gzip site.
+"""Build an independent, byte-preserving gzip/v1 or Brotli/v2 site.
 
 The default compressor uses only the Python standard library; the optional 7zip
 backend uses an already-installed executable for bounded Deflate optimization.
+Brotli uses an existing Node executable and native zlib streaming (quality 11,
+window 22, at most two workers), with strict decode/byte/SHA verification.
 The source viewer is never rewritten. Point shards and derived indexes are streamed
-as maximum-level standard gzip, with an empty filename and mtime=0; every output is then compared
-chunk-for-chunk against its original. Existing nonempty output directories are
-always refused, including after a failed build. Choose a new --output to retry.
+as raw bytes, never decoded or normalized. Existing nonempty output directories
+are always refused, including after a failed build. Choose a new --output to retry.
 """
 from __future__ import annotations
 
@@ -33,7 +34,15 @@ FRONTEND_FILES = (
 DERIVED_FILES = ("hidden_pano.js", "grid_all.js", "pano_search_index.js")
 CHUNK_SIZE = 1024 * 1024
 MAX_WORKERS = 16
+MAX_BROTLI_WORKERS = 2
+MAX_SITE_BYTES = 1_000_000_000
 DEFAULT_WORKERS = min(4, os.cpu_count() or 1)
+BROTLI_STATIC_FILES = (
+    "brotli-decoder.js", "brotli-worker.js",
+    "vendor/brotli-wasm/brotli_wasm.mjs", "vendor/brotli-wasm/brotli_wasm_bg.wasm",
+    "vendor/brotli-wasm/LICENSE", "vendor/brotli-wasm/NOTICE.md",
+)
+BROTLI_HELPER = Path(__file__).with_name("brotli_asset_codec.cjs")
 MANIFEST_PREFIX = "window.PANO_ASSET_MANIFEST="
 REDIRECT = b'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -137,8 +146,10 @@ class _StaticReferences(HTMLParser):
             self.urls.append(values["href"])
 
 
-def _static_names(source: Path, raw_names: set[str]) -> list[str]:
+def _static_names(source: Path, raw_names: set[str], codec: str = "gzip") -> list[str]:
     names = set(FRONTEND_FILES)
+    if codec == "brotli":
+        names.update(BROTLI_STATIC_FILES)
     names.update(path.relative_to(source).as_posix() for path in source.rglob("*.css"))
     # Preserve locally linked CSS / scripts (including vendor scripts), but never
     # accidentally publish a compressed data asset's raw JavaScript counterpart.
@@ -161,7 +172,7 @@ def _static_names(source: Path, raw_names: set[str]) -> list[str]:
     return sorted(names)
 
 
-def _preflight(source: Path, output: Path) -> tuple[list[Asset], list[str], int]:
+def _preflight(source: Path, output: Path, codec: str = "gzip") -> tuple[list[Asset], list[str], int]:
     if not source.is_dir():
         raise BuildError("The source viewer directory does not exist")
     if source == output or output.is_relative_to(source) or source.is_relative_to(output):
@@ -178,7 +189,7 @@ def _preflight(source: Path, output: Path) -> tuple[list[Asset], list[str], int]
         path = _require_file(source, name)
         signature = _signature(path)
         assets.append(Asset(name, signature[2], signature))
-    return assets, _static_names(source, raw_names), len(point_names)
+    return assets, _static_names(source, raw_names, codec), len(point_names)
 
 
 def _hash_file(path: Path) -> str:
@@ -306,6 +317,89 @@ def _compress_asset_python(source: Path, destination: Path, asset: Asset) -> dic
             "gzipSha256": _hash_file(compressed)}
 
 
+def _resolve_node(node: Path | str | None) -> str:
+    import shutil
+    executable = shutil.which(str(node)) if node is not None else shutil.which("node")
+    if not executable and node is not None and Path(node).is_file():
+        executable = str(node)
+    if not executable or not Path(executable).is_file():
+        raise BuildError("Node executable is unavailable; provide --node")
+    if not BROTLI_HELPER.is_file() or BROTLI_HELPER.is_symlink():
+        raise BuildError("Native Brotli helper is unavailable")
+    return str(Path(executable).resolve())
+
+
+def _run_brotli(node: str, arguments: list[str], scratch_parent: Path) -> dict:
+    import shutil
+    import subprocess
+    import tempfile
+    parent = scratch_parent.resolve()
+    scratch = Path(tempfile.mkdtemp(prefix=".brotli-", dir=parent)).resolve()
+    if scratch.parent != parent or not scratch.name.startswith(".brotli-"):
+        raise BuildError("Unexpected Brotli scratch path")
+    try:
+        summary, errors = scratch / "summary.json", scratch / "stderr.txt"
+        # Real file descriptors (never subprocess.PIPE) work in confined Windows
+        # runtimes too. All scratch lives beside the independent output on D/CI.
+        environment = dict(os.environ)
+        for key in ("TEMP", "TMP", "TMPDIR"):
+            environment[key] = str(scratch)
+        with summary.open("xb") as stdout, errors.open("xb") as stderr:
+            try:
+                result = subprocess.run([node, str(BROTLI_HELPER), *arguments],
+                    stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                    env=environment, timeout=1800)
+            except subprocess.TimeoutExpired as error:
+                raise BuildError("Brotli helper timed out") from error
+        if result.returncode:
+            detail = errors.read_text(encoding="utf-8", errors="replace")[-2000:].strip()
+            raise BuildError(f"Brotli helper failed (exit {result.returncode}): {detail}")
+        if summary.stat().st_size > 4096:
+            raise BuildError("Brotli helper summary exceeds bound")
+        try:
+            entry = json.loads(summary.read_text("utf-8"), object_pairs_hook=_unique_object)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise BuildError("Invalid Brotli helper summary") from error
+        expected = {"bytes", "compressedBytes", "sha256", "compressedSha256"}
+        if not isinstance(entry, dict) or set(entry) != expected:
+            raise BuildError("Invalid Brotli helper summary fields")
+        if any(type(entry[key]) is not int or not 0 <= entry[key] <= 2**53 - 1
+               for key in ("bytes", "compressedBytes")):
+            raise BuildError("Invalid Brotli helper summary sizes")
+        if any(not isinstance(entry[key], str) or not re.fullmatch("[a-f0-9]{64}", entry[key])
+               for key in ("sha256", "compressedSha256")):
+            raise BuildError("Invalid Brotli helper SHA-256")
+        return entry
+    finally:
+        if scratch.is_symlink() or scratch.resolve() != scratch or scratch.parent != parent:
+            raise BuildError("Brotli scratch path changed; refusing cleanup")
+        shutil.rmtree(scratch)
+
+
+def _verify_brotli(source: Path, compressed: Path, expected_bytes: int,
+                   expected_hash: str, *, node: Path | str | None = None) -> dict:
+    return _run_brotli(_resolve_node(node), ["--mode", "verify", "--source", str(source),
+        "--output", str(compressed), "--bytes", str(expected_bytes), "--sha256", expected_hash],
+        compressed.parent)
+
+
+def _compress_asset_brotli(source: Path, destination: Path, asset: Asset, *,
+                           node: str, quality: int = 11, lgwin: int = 22) -> dict:
+    original = source / asset.name
+    compressed = destination / (asset.name + ".br")
+    if _signature(original) != asset.signature:
+        raise BuildError(f"Source changed after preflight: {asset.name}")
+    entry = _run_brotli(node, ["--mode", "compress", "--source", str(original),
+        "--output", str(compressed), "--quality", str(quality), "--lgwin", str(lgwin)], destination)
+    if _signature(original) != asset.signature or entry["bytes"] != asset.size:
+        raise BuildError(f"Source changed during compression/verification: {asset.name}")
+    if (compressed.is_symlink() or not compressed.is_file()
+            or compressed.stat().st_size != entry["compressedBytes"]
+            or _hash_file(compressed) != entry["compressedSha256"]):
+        raise BuildError(f"Brotli compressed size/SHA-256 verification failed: {asset.name}")
+    return {"url": asset.name + ".br", **entry}
+
+
 def _js_json(value: object) -> str:
     # Escape HTML delimiters and line separators even when metadata includes
     # unusual names. The manifest remains compact JSON and safe in script tags.
@@ -315,12 +409,34 @@ def _js_json(value: object) -> str:
 
 def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
                output: Path | str = REPOSITORY_ROOT / "dist" / "pages", *,
-               workers: int = DEFAULT_WORKERS, progress_interval: float = 5.0,
+               workers: int | None = None, progress_interval: float = 5.0,
                expected_files: int | None = None,
                progress: Callable[[str], None] | None = None,
-               compression_backend: str = "python", seven_zip: Path | str | None = None) -> dict:
-    """Build from the metadata inventory, with an optional fixed-count release gate."""
+               compression_backend: str = "python", seven_zip: Path | str | None = None,
+               codec: str = "gzip", node: Path | str | None = None,
+               brotli_quality: int = 11, brotli_lgwin: int = 22,
+               max_site_bytes: int = MAX_SITE_BYTES) -> dict:
+    """Build a byte-preserving site; gzip/v1 remains the default API."""
     import shutil
+    if codec not in ("gzip", "brotli"):
+        raise BuildError("codec must be gzip or brotli")
+    if workers is None:
+        workers = min(DEFAULT_WORKERS, MAX_BROTLI_WORKERS) if codec == "brotli" else DEFAULT_WORKERS
+    if type(brotli_quality) is not int or not 0 <= brotli_quality <= 11:
+        raise BuildError("brotli_quality must be between 0 and 11")
+    if type(brotli_lgwin) is not int or not 10 <= brotli_lgwin <= 24:
+        raise BuildError("brotli_lgwin must be between 10 and 24")
+    if type(max_site_bytes) is not int or not 1 <= max_site_bytes <= MAX_SITE_BYTES:
+        raise BuildError(f"max_site_bytes must be between 1 and {MAX_SITE_BYTES}; cannot relax 1GB gate")
+    node_executable = None
+    if codec == "brotli":
+        if compression_backend != "python" or seven_zip is not None:
+            raise BuildError("Brotli uses only the native Node backend")
+        if type(workers) is int and workers > MAX_BROTLI_WORKERS:
+            raise BuildError("Brotli compression supports at most 2 bounded workers")
+        node_executable = _resolve_node(node)
+    elif node is not None:
+        raise BuildError("--node requires the brotli codec")
     if compression_backend not in ("python", "7zip"):
         raise BuildError("compression_backend must be python or 7zip")
     native_executable = None
@@ -343,37 +459,56 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
     if source_path.is_symlink() or output_path.is_symlink():
         raise BuildError("Source/output directory symlinks are not accepted")
     source_path, output_path = source_path.resolve(), output_path.resolve()
-    assets, static_names, point_count = _preflight(source_path, output_path)
+    assets, static_names, point_count = _preflight(source_path, output_path, codec)
     if expected_files is not None and len(assets) != expected_files:
-        raise BuildError(f"Expected exactly {expected_files} gzip assets, found {len(assets)}")
+        raise BuildError(f"Expected exactly {expected_files} {codec} assets, found {len(assets)}")
+    # Snapshot the metadata inventory and static source signatures before copying.
+    inventory_signature = _signature(source_path / "data_meta.js")
+    static_signatures = {name: _signature(source_path / name) for name in static_names}
     started = time.monotonic()
     source_bytes = sum(asset.size for asset in assets)
     if progress:
-        progress(f"gzip start files={len(assets)} pointFiles={point_count} "
-                 f"bytes={source_bytes} workers={workers} level=9")
+        parameters = f"quality={brotli_quality} lgwin={brotli_lgwin}" if codec == "brotli" else "level=9"
+        progress(f"{codec} start files={len(assets)} pointFiles={point_count} "
+                 f"bytes={source_bytes} workers={workers} {parameters}")
     output_path.mkdir(parents=True, exist_ok=True)
     viewer_output = output_path / "city-viewer"
     viewer_output.mkdir()  # exclusive: do not merge a racing or previous build
+    static_hashes = {}
     for name in static_names:
+        original = _require_file(source_path, name)
+        if _signature(original) != static_signatures[name]:
+            raise BuildError(f"Static source changed after preflight: {name}")
         target = viewer_output / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        with (source_path / name).open("rb") as raw, target.open("xb") as copied:
+        digest = hashlib.sha256()
+        with original.open("rb") as raw, target.open("xb") as copied:
             for chunk in iter(lambda: raw.read(CHUNK_SIZE), b""):
+                digest.update(chunk)
                 copied.write(chunk)
+        static_hashes[name] = digest.hexdigest()
+        if (_signature(original) != static_signatures[name]
+                or _hash_file(target) != static_hashes[name]):
+            raise BuildError(f"Static source/copy changed during copying: {name}")
 
     files = {}
     completed_bytes = compressed_bytes = 0
     last_progress = started
     asset_iterator = iter(assets)
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="gzip") as executor:
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=codec) as executor:
         pending = {}
 
         def submit_next() -> bool:
             asset = next(asset_iterator, None)
             if asset is None:
                 return False
-            pending[executor.submit(_compress_asset, source_path, viewer_output, asset,
-                backend=compression_backend, seven_zip=native_executable)] = asset
+            if codec == "brotli":
+                future = executor.submit(_compress_asset_brotli, source_path, viewer_output, asset,
+                    node=node_executable, quality=brotli_quality, lgwin=brotli_lgwin)
+            else:
+                future = executor.submit(_compress_asset, source_path, viewer_output, asset,
+                    backend=compression_backend, seven_zip=native_executable)
+            pending[future] = asset
             return True
 
         # Bound queued work too: never submit the full repository at once.
@@ -391,7 +526,7 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
                     submit_next()
                 now = time.monotonic()
                 if progress and (now - last_progress >= progress_interval or not pending):
-                    progress(f"gzip progress files={len(files)}/{len(assets)} "
+                    progress(f"{codec} progress files={len(files)}/{len(assets)} "
                              f"bytes={completed_bytes}/{source_bytes} compressedBytes={compressed_bytes} "
                              f"seconds={now - started:.1f}")
                     last_progress = now
@@ -402,30 +537,74 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
 
     if set(files) != {asset.name for asset in assets}:
         raise BuildError("Manifest inventory does not exactly match the source asset inventory")
+    if (_signature(source_path / "data_meta.js") != inventory_signature
+            or _point_names(source_path) | set(DERIVED_FILES) != set(files)
+            or _static_names(source_path, set(files), codec) != static_names):
+        raise BuildError("Source metadata/static inventory changed during build")
+    for asset in assets:
+        original = _require_file(source_path, asset.name)
+        if (_signature(original) != asset.signature
+                or _hash_file(original) != files[asset.name]["sha256"]
+                or _signature(original) != asset.signature):
+            raise BuildError(f"Source changed before publication: {asset.name}")
+        compressed = _require_file(viewer_output, files[asset.name]["url"])
+        compressed_hash = "compressedSha256" if codec == "brotli" else "gzipSha256"
+        if (compressed.stat().st_size != files[asset.name]["compressedBytes"]
+                or _hash_file(compressed) != files[asset.name][compressed_hash]):
+            raise BuildError(f"Compressed asset changed before publication: {asset.name}")
+    for name in static_names:
+        original = _require_file(source_path, name)
+        if (_signature(original) != static_signatures[name]
+                or _hash_file(original) != static_hashes[name]
+                or _hash_file(viewer_output / name) != static_hashes[name]):
+            raise BuildError(f"Static source/copy changed before publication: {name}")
     files = dict(sorted(files.items()))
     totals = {"files": len(files), "bytes": completed_bytes,
               "compressedBytes": compressed_bytes, "savedBytes": completed_bytes - compressed_bytes,
               "savingPercent": round((1 - compressed_bytes / completed_bytes) * 100, 4)
               if completed_bytes else 0.0}
-    manifest = {"version": 1, "codec": "gzip", "files": files, "totals": totals}
+    manifest = {"version": 2 if codec == "brotli" else 1, "codec": codec, "files": files, "totals": totals}
+    compression = ({"backend": "node:zlib", "quality": brotli_quality, "lgwin": brotli_lgwin,
+                    "mode": "generic", "threadsPerWorker": 1}
+                   if codec == "brotli" else {"level": 9, "mtime": 0, "filename": ""})
     report = {**manifest, "pointFiles": point_count, "verifiedFiles": len(files),
-              "compression": {"level": 9, "mtime": 0, "filename": ""},
+              "compression": compression,
               "workers": workers, "seconds": round(time.monotonic() - started, 3),
               "staticFiles": static_names}
     if compression_backend == "7zip":
         report["compression"].update({"backend": "7zip", "fastBytes": 128,
                                       "passes": 3, "threadsPerWorker": 1})
-    # Publish success markers only after every gzip has passed byte/SHA checks.
-    with (viewer_output / "asset-manifest.js").open("x", encoding="utf-8", newline="\n") as file:
-        file.write(MANIFEST_PREFIX + _js_json(manifest) + ";\n")
-    with (output_path / "build-report.json").open("x", encoding="utf-8", newline="\n") as file:
-        file.write(_js_json(report) + "\n")
+    expected_output = {"city-viewer/" + name for name in static_names}
+    expected_output.update("city-viewer/" + entry["url"] for entry in files.values())
+    actual_output = {path.relative_to(output_path).as_posix() for path in output_path.rglob("*")
+                     if path.is_file()}
+    if actual_output != expected_output or any(path.is_symlink() for path in output_path.rglob("*")):
+        raise BuildError("Output inventory does not exactly match expected files")
+    success_files = {"city-viewer/asset-manifest.js", "build-report.json", "index.html", ".nojekyll"}
+    report["outputFiles"] = sorted(expected_output | success_files)
+    manifest_bytes = (MANIFEST_PREFIX + _js_json(manifest) + ";\n").encode("utf-8")
+    existing_bytes = sum(path.stat().st_size for path in output_path.rglob("*") if path.is_file())
+    report["siteBytes"] = 0
+    # Report contains its own size, so find the tiny decimal-length fixed point.
+    while True:
+        report_bytes = (_js_json(report) + "\n").encode("utf-8")
+        site_bytes = existing_bytes + len(manifest_bytes) + len(report_bytes) + len(REDIRECT)
+        if report["siteBytes"] == site_bytes:
+            break
+        report["siteBytes"] = site_bytes
+    if site_bytes > max_site_bytes:
+        raise BuildError(f"Site size {site_bytes} exceeds siteBytes gate {max_site_bytes} (1GB maximum)")
+    # Publish success markers only after every byte/SHA, inventory and size gate.
+    with (viewer_output / "asset-manifest.js").open("xb") as file:
+        file.write(manifest_bytes)
+    with (output_path / "build-report.json").open("xb") as file:
+        file.write(report_bytes)
     with (output_path / "index.html").open("xb") as file:
         file.write(REDIRECT)
     with (output_path / ".nojekyll").open("xb"):
         pass
     if progress:
-        progress(f"gzip complete files={len(files)} verifiedFiles={len(files)} "
+        progress(f"{codec} complete files={len(files)} verifiedFiles={len(files)} "
                  f"bytes={completed_bytes} compressedBytes={compressed_bytes} "
                  f"savingPercent={totals['savingPercent']:.4f} seconds={report['seconds']:.3f}")
     return report
@@ -437,8 +616,18 @@ def main(argv: list[str] | None = None) -> int:
                         help="source viewer directory (default: repository city-viewer)")
     parser.add_argument("--output", type=Path, default=REPOSITORY_ROOT / "dist" / "pages",
                         help="new or empty output directory (default: repository dist/pages)")
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
-                        help=f"bounded compression threads, 1..{MAX_WORKERS} (default: {DEFAULT_WORKERS})")
+    parser.add_argument("--workers", type=int, default=None,
+                        help=f"bounded workers 1..{MAX_WORKERS}, Brotli at most 2 (default: gzip {DEFAULT_WORKERS}, Brotli 2)")
+    parser.add_argument("--codec", choices=("gzip", "brotli"), default="gzip",
+                        help="gzip/v1 compatibility default or Brotli/v2 native streaming compression")
+    parser.add_argument("--node", default=None,
+                        help="existing Node executable or PATH command (otherwise node from PATH)")
+    parser.add_argument("--brotli-quality", type=int, default=11,
+                        help="Brotli quality 0..11 (default: 11)")
+    parser.add_argument("--brotli-lgwin", type=int, default=22,
+                        help="Brotli window 10..24 (default: 22)")
+    parser.add_argument("--max-site-bytes", type=int, default=MAX_SITE_BYTES,
+                        help="strict total publication gate; at most 1000000000 bytes")
     parser.add_argument("--compression-backend", choices=("python", "7zip"), default="python",
                         help="standard gzip compressor; 7zip uses bounded Deflate optimization")
     parser.add_argument("--seven-zip", type=Path, default=None,
@@ -452,9 +641,11 @@ def main(argv: list[str] | None = None) -> int:
         build_site(args.source, args.output, workers=args.workers,
                    progress_interval=args.progress_interval, expected_files=args.expected_files,
                    progress=lambda message: print(message, flush=True),
-                    compression_backend=args.compression_backend, seven_zip=args.seven_zip)
+                    compression_backend=args.compression_backend, seven_zip=args.seven_zip,
+                    codec=args.codec, node=args.node, brotli_quality=args.brotli_quality,
+                    brotli_lgwin=args.brotli_lgwin, max_site_bytes=args.max_site_bytes)
     except (BuildError, OSError, EOFError) as error:
-        print(f"gzip build failed: {error}", file=sys.stderr, flush=True)
+        print(f"{args.codec} build failed: {error}", file=sys.stderr, flush=True)
         return 1
     return 0
 

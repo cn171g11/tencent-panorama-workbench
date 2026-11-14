@@ -75,7 +75,7 @@
 </head>
 <body>
 <header>
-  <h1>tencent-panorama-workbench <span class="ver">v2.43.0</span><span class="ver-note"> · 11.14合集审计</span></h1>
+  <h1>tencent-panorama-workbench <span class="ver">v2.45.0</span><span class="ver-note"> · 山东常规／Brotli无损发布</span></h1>
   <select id="provinceSelect" title="省级行政区"></select>
   <select id="citySelect" title="地级市" disabled></select>
   <select id="countySelect" title="县级行政区" style="display:none"></select>
@@ -99,6 +99,7 @@
 <script src="data_meta.js"></script>
 <script src="data_districts.js"></script>
 <script src="asset-manifest.js"></script>
+<script src="brotli-decoder.js"></script>
 <script src="asset-loader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -1411,7 +1412,7 @@
   }).catch(function(error){
     els.loading.style.display='none';
     els.stats.textContent='数据加载失败: '+error.message;
-    els.mapHint.textContent='请刷新页面或使用支持 gzip 解压的现代浏览器。'+error.message;
+    els.mapHint.textContent='请刷新页面或使用支持 WebAssembly/安全解压的现代浏览器。'+error.message;
     console.error(error);
   });
 })();

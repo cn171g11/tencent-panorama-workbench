@@ -15,7 +15,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 180
     steps:
       - name: Check out sources
         uses: actions/checkout@v4
@@ -38,10 +38,10 @@ jobs:
       - name: Run Python fixture regression tests
         run: python -m unittest discover -s tools/tests -v
       - name: Run browser asset loader and mobility regression tests
-        run: node --test tools/tests/asset-loader.test.js tools/tests/pano-mobility.test.js tools/tests/redirect-site.test.js tools/tests/viewer-stream.test.js
-      - name: Build the verified gzip-only publication directory
+        run: node --test tools/tests/*.test.js
+      - name: Build the verified Brotli-only publication directory
         run: |
-          python tools/build_gzip_site.py --output dist/pages --workers 4 --compression-backend 7zip
+          python tools/build_gzip_site.py --output dist/pages --codec brotli --node node --workers 2 --brotli-quality 11 --brotli-lgwin 22
           python -c "from pathlib import Path; size=sum(p.stat().st_size for p in Path('dist/pages').rglob('*') if p.is_file()); print(f'Published directory bytes={size}'); assert size <= 1000000000, 'Pages directory exceeds 1 GB; retain data and choose another hosting plan'"
       - name: Upload only the publication artifact
         uses: actions/upload-pages-artifact@v3
