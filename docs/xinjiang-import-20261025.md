@@ -9,7 +9,7 @@
 | source | 条数 | 去重后 | 处理 |
 |---|---|---|---|
 | `qq_pano` | 12,874 | 12,845 | 移动性审计后拆成隐藏 / 常规两个集合 |
-| `baidu_pano` | 13,022 | 12,986 | 暂存 `staging/baidu-xinjiang-20261025/`，未发布 |
+| `baidu_pano` | 13,022 | 12,986 | 当时单独暂存；2026-11-14已原样迁至[百度工作台](<https://github.com/cn171g11/baidu-panorama-workbench/tree/1fac152642234a8b2eee61f8dad7aedbb48d6b00/sources/baidu-xinjiang-20261025>)并上线，不计腾讯总量 |
 | `google_pano` | 1 | 1 | 丢弃：坐标 37.62E / 55.75N 在莫斯科，与新疆无关 |
 
 ## 腾讯：先审计，再分流

@@ -189,9 +189,11 @@
 
 未发布、待处理的数据放这里，**不进入查看器、不参与构建**。
 
-| 目录 | 内容 | 数量 | 状态 |
+| 已迁出批次 | 内容 | 数量 | 去向 |
 |---|---|---|---|
-| `staging/baidu-xinjiang-20261025/` | 百度街景（新疆） | 12,986 | 未发布，等待后续计划 |
+| `baidu-xinjiang-20261025` | 百度街景（新疆） | 12,986 | 已迁至[百度仓库原件目录](<https://github.com/cn171g11/baidu-panorama-workbench/tree/main/sources/baidu-xinjiang-20261025>)并[上线查看](<https://cn171g11.github.io/baidu-panorama-workbench/city-viewer/?city=650100>) |
+
+2026-11-14 按用户要求迁移；原件 SHA-256 保持不变，百度站点已逐片核对全部12,986点。腾讯正式数据和查看器不变，详见[迁移记录](<https://github.com/cn171g11/baidu-panorama-workbench/blob/1fac152642234a8b2eee61f8dad7aedbb48d6b00/docs/xinjiang-migration-20261114.md>)。
 
 ---
 
