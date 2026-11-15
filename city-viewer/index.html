@@ -51,11 +51,16 @@
   .leaflet-popup-content { margin:10px 14px; }
   .leaflet-container { background:#0d1117; font-family:inherit; }
   #loadingData { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); z-index:1200; color:var(--dim); background:rgba(15,20,26,.9); border:1px solid var(--line); border-radius:8px; padding:14px 26px; display:none; }
-  #nationGate { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); z-index:1200; display:none; text-align:center; color:var(--fg); background:rgba(15,20,26,.94); border:1px solid var(--line); border-radius:12px; padding:22px 30px; box-shadow:0 14px 40px rgba(0,0,0,.45); }
-  #nationGate .ng-title { font-size:16px; font-weight:600; margin-bottom:8px; }
-  #nationGate .ng-sub { color:var(--dim); font-size:12.5px; line-height:1.6; margin-bottom:14px; }
-  #nationGate button { padding:9px 22px; border-radius:8px; border:1px solid var(--accent); background:#173455; color:#fff; cursor:pointer; font-size:13px; }
-  #nationGate button:hover { background:#1d4a7a; }
+  #nationGate, #startGate { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); z-index:1200; display:none; text-align:center; color:var(--fg); background:rgba(15,20,26,.94); border:1px solid var(--line); border-radius:12px; padding:22px 30px; box-shadow:0 14px 40px rgba(0,0,0,.45); }
+  #nationGate .ng-title, #startGate .ng-title { font-size:16px; font-weight:600; margin-bottom:8px; }
+  #nationGate .ng-sub, #startGate .ng-sub { color:var(--dim); font-size:12.5px; line-height:1.6; margin-bottom:14px; }
+  #nationGate button, #startGate button { padding:9px 22px; border-radius:8px; border:1px solid var(--accent); background:#173455; color:#fff; cursor:pointer; font-size:13px; }
+  #nationGate button:hover, #startGate button:hover { background:#1d4a7a; }
+  #startGate { width:min(520px,calc(100vw - 32px)); max-height:calc(100vh - var(--header-h, 64px) - 32px); overflow:auto; top:calc((100vh + var(--header-h, 64px))/2); }
+  #startGate .sg-btns { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+  #startGate button:disabled { opacity:.5; cursor:default; }
+  #startGate button.secondary { background:#10141a; border-color:var(--line); color:var(--fg); }
+  #startGate button.secondary:hover { background:#1a222c; border-color:var(--accent); }
   @media (max-width:680px){
     header { padding:6px 8px; gap:6px; }
     h1 { display:none; }
@@ -75,7 +80,7 @@
 </head>
 <body>
 <header>
-  <h1>tencent-panorama-workbench <span class="ver">v2.45.0</span><span class="ver-note"> · 山东常规／Brotli无损发布</span></h1>
+  <h1>tencent-panorama-workbench <span class="ver">v2.46.0</span><span class="ver-note"> · 选择视图后加载</span></h1>
   <select id="provinceSelect" title="省级行政区"></select>
   <select id="citySelect" title="地级市" disabled></select>
   <select id="countySelect" title="县级行政区" style="display:none"></select>
@@ -93,7 +98,15 @@
   <div class="ng-sub" id="ngSub"></div>
   <button id="nationLoadBtn">加载</button>
 </div>
-<div class="hint" id="mapHint">地图选点: 点击任意位置查看最近街景</div>
+<div id="startGate" role="dialog" aria-modal="false" aria-labelledby="sgTitle" aria-describedby="sgSub" style="display:block">
+  <div class="ng-title" id="sgTitle">先选择视图</div>
+  <div class="ng-sub" id="sgSub">默认打开时不加载任何街景。请先在顶部选择全国、省份或城市，再点击“加载所选视图”。</div>
+  <div class="sg-btns">
+    <button id="startNationBtn" disabled>加载所选视图</button>
+    <button id="startPickBtn" class="secondary">选择省份或城市</button>
+  </div>
+</div>
+<div class="hint" id="mapHint">请先选择视图（全国、省份或城市），加载后再显示街景</div>
 <div class="hud"><span id="hudZoom">Z —</span><br><span id="hudCoord">—</span></div>
 
 <script src="data_meta.js"></script>
@@ -133,7 +146,7 @@
   var SEARCH_PREFIX_MAX_LENGTH = 6;
   var SEARCH_SEGMENT_START = 15;
   var SEARCH_SEGMENT_END = 20;
-  var state = { province:'', cityFilter:'', countyFilter:'', entries:[], results:[], distMode:false, center:null, activePid:null, bounds:null, provinceKeys:[], confirmed:{}, gateRun:null, dispMode:'density', mode:'overview', overviewCells:[], overviewMax:1, overviewTotal:0, cellPref:null, dataCity:null, autoLoaded:false, prevMode:'', prevCity:'', posQuery:null, posError:null, dispAuto:false, searchActive:false, searchPrev:null, searchResults:null, searchToken:0, searchIndexPromise:null };
+  var state = { started:false, startLoading:false, initializingView:false, province:'', cityFilter:'', countyFilter:'', entries:[], results:[], distMode:false, center:null, activePid:null, bounds:null, provinceKeys:[], confirmed:{}, gateRun:null, dispMode:'density', mode:'idle', overviewCells:[], overviewMax:1, overviewTotal:0, cellPref:null, dataCity:null, autoLoaded:false, prevMode:'', prevCity:'', posQuery:null, posError:null, dispAuto:false, searchActive:false, searchPrev:null, searchResults:null, viewToken:0, searchToken:0, searchIndexPromise:null };
   var DISP_MODES = [{ id:'density', label:'密度·省内存' }, { id:'points', label:'散点' }];
   var map=null, tileLayer=null, pointLayer=null, currentPopup=null;
 
@@ -146,7 +159,9 @@
     mapHint:document.getElementById('mapHint'), loading:document.getElementById('loadingData'),
     nationGate:document.getElementById('nationGate'), nationLoadBtn:document.getElementById('nationLoadBtn'),
     ngTitle:document.getElementById('ngTitle'), ngSub:document.getElementById('ngSub'),
-    hudZoom:document.getElementById('hudZoom'), hudCoord:document.getElementById('hudCoord')
+    hudZoom:document.getElementById('hudZoom'), hudCoord:document.getElementById('hudCoord'),
+    startGate:document.getElementById('startGate'), sgSub:document.getElementById('sgSub'),
+    startNationBtn:document.getElementById('startNationBtn'), startPickBtn:document.getElementById('startPickBtn')
   };
 
   function updateHudZoom(){
@@ -470,23 +485,96 @@
     list.forEach(function(c){ var o=document.createElement('option'); o.value=c.code; o.textContent=c.name; els.county.appendChild(o); });
     els.county.style.display='';
   }
-  function buildProvinceSelect(){
+  function buildProvinceSelect(placeholder){
     var pm=provinceMap();
     var names=Object.keys(pm).sort(function(a,b){ return a.localeCompare(b,'zh-Hans-CN'); });
-    var html='<option value="全国">全国（'+names.length+' 个数据分组）</option>';
+    var html=(placeholder?'<option value="">请选择视图…</option>':'')+'<option value="全国">全国（'+names.length+' 个数据分组）</option>';
     names.forEach(function(p){
       html+='<option value="'+esc(p)+'">'+esc(p)+'（'+prefList(pm[p]).length+'）</option>';
     });
     els.province.innerHTML=html;
-    els.province.value=state.province||'全国';
+    els.province.value=placeholder?(state.province||''):(state.province||'全国');
     els.province.onchange=function(){ selectProvince(els.province.value); };
   }
-  function loadCityScript(key){
-    if(window.PANO_CITY && window.PANO_CITY[key]) return Promise.resolve();
-    return window.PanoAssets.loadScript('data_'+key+'.js').then(function(){
-      if(!window.PANO_CITY || !Array.isArray(window.PANO_CITY[key])){
-        throw new Error('data_'+key+'.js 未提供有效点位数组');
+  var overviewLoadPromise=null;
+  function loadOverviewData(){
+    if(overviewLoadPromise) return overviewLoadPromise;
+    overviewLoadPromise=Promise.resolve().then(function(){
+      if(!window.PanoAssets) throw new Error('数据加载器加载失败，请刷新页面');
+      return window.PanoAssets.loadScript('grid_all.js');
+    }).then(function(){
+      var grid=window.PANO_GRID_ALL;
+      if(!grid || typeof grid!=='object' || Array.isArray(grid) || !Object.keys(grid).length){
+        throw new Error('全国网格未提供有效内容');
       }
+      allKeys(true).forEach(function(key){
+        var cells=grid[key];
+        if(!Array.isArray(cells)) throw new Error('网格缺少有效集合 '+key);
+        var total=0;
+        for(var i=0;i<cells.length;i++){
+          var cell=cells[i];
+          if(!Array.isArray(cell) || cell.length<3 || !Number.isSafeInteger(cell[0]) || !Number.isSafeInteger(cell[1]) || !Number.isSafeInteger(cell[2]) || cell[2]<=0){
+            throw new Error('网格单元格式无效 '+key);
+          }
+          total+=cell[2];
+        }
+        if(total!==(window.PANO_COUNT||{})[key]) throw new Error('网格点数与元数据不一致 '+key);
+      });
+    }).catch(function(error){ overviewLoadPromise=null; throw error; });
+    return overviewLoadPromise;
+  }
+  function showStartGate(error){
+    var p=state.province, city=state.cityFilter;
+    var label=p?(city?(p+' · '+cityMeta(city).name):p):'';
+    els.startGate.style.display='block';
+    els.sgSub.textContent=error
+      ? ('加载失败：'+error.message+'。请检查网络后重新加载，或选择其他视图。')
+      : (label?('已选择 '+label+'。尚未加载街景，点击“加载所选视图”后再显示。'):'默认打开时不加载任何街景。请先在顶部选择全国、省份或城市，再点击“加载所选视图”。');
+    els.startNationBtn.disabled=!p || state.startLoading;
+    els.startNationBtn.textContent=error?'重新加载所选视图':'加载所选视图';
+    els.stats.textContent=error?'视图加载失败':(label?'待加载 · '+label:'尚未加载街景');
+    els.mapHint.textContent='请先选择视图（全国、省份或城市），确认加载后再显示街景';
+  }
+  function startSelectedView(){
+    if(state.started || state.startLoading) return;
+    var province=state.province, city=state.cityFilter;
+    if(!province){ showStartGate(); return; }
+    state.startLoading=true;
+    els.startNationBtn.disabled=true; els.startPickBtn.disabled=true;
+    els.province.disabled=true; els.city.disabled=true;
+    els.startGate.style.display='none';
+    els.loading.style.display='block'; els.loading.textContent='加载并校验所选视图…';
+    els.stats.textContent='加载所选视图…';
+    return loadOverviewData().then(function(){
+      state.started=true; state.startLoading=false;
+      els.province.disabled=false; els.startPickBtn.disabled=false;
+      els.loading.style.display='none'; els.search.disabled=false; els.dispMode.disabled=false;
+      els.startGate.style.display='none';
+      state.initializingView=true;
+      try{
+        selectProvince(province);
+        if(city){ els.city.value=city; selectCity(city); }
+      }finally{ state.initializingView=false; }
+      els.mapHint.textContent='地图选点: 点击任意位置查看最近街景';
+      setTimeout(function(){ if(map) map.invalidateSize(); },300);
+    }).catch(function(error){
+      state.started=false; state.startLoading=false; state.initializingView=false; state.mode='idle';
+      state.overviewCells=[]; state.overviewTotal=0; state.bounds=null; state.cellPref=null;
+      clearEntries();
+      els.province.disabled=false; els.startPickBtn.disabled=false;
+      els.city.disabled=!state.province || state.province==='全国';
+      els.search.disabled=true; els.dispMode.disabled=true; els.loading.style.display='none';
+      showStartGate(error);
+    });
+  }
+  function loadCityScript(key){
+    if(window.PANO_CITY && Array.isArray(window.PANO_CITY[key])) return Promise.resolve(window.PANO_CITY[key]);
+    var file=isHiddenPref(key)?'hidden_pano.js':('data_'+key+'.js');
+    return window.PanoAssets.loadScript(file).then(function(){
+      if(!window.PANO_CITY || !Array.isArray(window.PANO_CITY[key])){
+        throw new Error(file+' 未提供有效点位数组 '+key);
+      }
+      return window.PANO_CITY[key];
     });
   }
   function computeBounds(){
@@ -497,10 +585,10 @@
     });
     return {minLng:a,maxLng:b,minLat:c,maxLat:d};
   }
-  function buildEntries(keys){
+  function buildEntries(keys,lists){
     var arr=[];
-    keys.forEach(function(k){
-      var pf=prefOf(k), list=window.PANO_CITY[k]||[];
+    keys.forEach(function(k,number){
+      var pf=prefOf(k), list=lists?lists[number]:((window.PANO_CITY||{})[k]||[]);
       for(var i=0;i<list.length;i++){ var e=list[i]; e[9]=pf; arr.push(e); }
     });
     state.entries=arr;
@@ -525,19 +613,22 @@
     if(pointLayer) pointLayer.setData([],[],null);
   }
   function loadKeys(keys,city,cb){
+    var token=++state.viewToken;
     state.mode='detail';
     state.cityFilter=city||'';
     if(currentPopup){ currentPopup.remove(); currentPopup=null; }
     state.activePid=null;
     els.loading.style.display='block';
     els.stats.textContent='加载数据…';
-    Promise.all(keys.map(loadCityScript)).then(function(){
-      buildEntries(keys);
+    return Promise.all(keys.map(loadCityScript)).then(function(lists){
+      if(token!==state.viewToken) return;
+      buildEntries(keys,lists);
       assignCounties();
       fillRoadFilter();
       els.loading.style.display='none';
       if(cb) cb(); else { rerender(); fitMap(); }
     }).catch(function(err){
+      if(token!==state.viewToken) return;
       els.loading.style.display='none';
       els.stats.textContent=err.message;
     });
@@ -570,12 +661,24 @@
     state.bounds=cells.length?{minLng:a,maxLng:b,minLat:c,maxLat:d}:null;
   }
   function leaveSearchMode(){
-    if(!state.searchActive) return;
-    state.searchActive=false; state.searchPrev=null; state.searchResults=null;
+    clearTimeout(searchTimer);
     state.searchToken+=1;
+    if(!state.searchActive){ els.loading.style.display='none'; return; }
+    state.searchActive=false; state.searchPrev=null; state.searchResults=null;
     els.search.value=''; els.loading.style.display='none';
   }
   function selectProvince(p){
+    if(state.startLoading) return;
+    if(!state.started){
+      state.province=p||''; state.cityFilter=''; state.countyFilter='';
+      state.provinceKeys=(p==='全国')?allKeys():(provinceMap()[p]||[]);
+      fillCitySelect(state.provinceKeys,p&&p!=='全国'?p:'');
+      updateCountySelect('');
+      showStartGate(); syncHeaderHeight();
+      return;
+    }
+    if(!p) return;
+    state.viewToken+=1; state.gateRun=null;
     leaveSearchMode();
     restoreDispMode();
     state.province=p; buildProvinceSelect(); syncHeaderHeight();
@@ -593,8 +696,11 @@
     fitMap();
   }
   function selectCity(city){
+    if(state.startLoading) return;
     city=city||'';
+    if(!state.started){ state.cityFilter=city; showStartGate(); return; }
     if(!city){ selectProvince(state.province||'全国'); return; }
+    state.viewToken+=1; state.gateRun=null;
     leaveSearchMode();
     restoreDispMode();
     state.cityFilter=city; state.countyFilter=''; state.dataCity=null;
@@ -605,7 +711,7 @@
     els.nationGate.style.display='none';
     updateCountySelect(city);
     buildOverview(keysWithPref(city,state.provinceKeys));
-    if(state.dispMode==='points'){
+    if(state.dispMode==='points' && !state.initializingView){
       els.loading.style.display='block';
       ensureCityData(city,function(){
         els.loading.style.display='none';
@@ -650,6 +756,8 @@
     run();
   }
   function showCityGrid(city){
+    state.viewToken+=1; state.gateRun=null;
+    els.loading.style.display='none'; els.nationGate.style.display='none';
     state.mode='city'; state.countyFilter=''; state.autoLoaded=false;
     els.county.value='';
     buildOverview(keysWithPref(city,state.provinceKeys));
@@ -666,7 +774,7 @@
     return pf||null;
   }
   function applyZoomLod(){
-    if(!map||state.searchActive) return;
+    if(!map || !state.started || state.initializingView || state.searchActive) return;
     var z=map.getZoom();
     if(state.mode==='overview'||state.mode==='city'){
       if(z<DEEP_IN) return;
@@ -722,7 +830,8 @@
       map.setView([(b.minLat+b.maxLat)/2,(b.minLng+b.maxLng)/2],12);
       clampZoom(); return;
     }
-    map.fitBounds([[b.minLat,b.minLng],[b.maxLat,b.maxLng]],{padding:[30,30]});
+    // Initial scope confirmation displays only the grid, even for tiny hidden groups.
+    map.fitBounds([[b.minLat,b.minLng],[b.maxLat,b.maxLng]],{padding:[30,30],maxZoom:state.initializingView?DEEP_IN-1:undefined});
     clampZoom();
   }
   function fillRoadFilter(){
@@ -850,8 +959,8 @@
         return true;
       }};
   }
-  function releaseSearchKey(key){
-    if(window.PANO_CITY&&window.PANO_CITY[key]){
+  function releaseSearchKey(key,expected){
+    if(window.PANO_CITY && window.PANO_CITY[key] && (!expected || window.PANO_CITY[key]===expected)){
       try{ delete window.PANO_CITY[key]; }catch(error){ console.warn('search release failed',key,error); }
     }
   }
@@ -905,11 +1014,11 @@
         if(token!==state.searchToken) return;
         var key=candidates[i];
         var wasLoaded=Boolean(window.PANO_CITY&&window.PANO_CITY[key]);
-        if(!wasLoaded){
-          try{ await loadCityScript(key); loadedKeys.push(key); }
-          catch(error){ throw new Error('搜索分片 '+key+' 加载失败: '+error.message); }
-        }
-        var entries=(window.PANO_CITY&&window.PANO_CITY[key])||[];
+        var entries;
+        try{ entries=await loadCityScript(key); }
+        catch(error){ throw new Error('搜索分片 '+key+' 加载失败: '+error.message); }
+        if(!wasLoaded) loadedKeys.push({key:key,entries:entries});
+        if(token!==state.searchToken) return;
         var pref=prefOf(key);
         for(var j=0;j<entries.length;j+=1){
           var entry=entries[j];
@@ -918,12 +1027,12 @@
           matches.push(entry);
           if(matches.length>=GLOBAL_SEARCH_LIMIT){ isTruncated=true; break; }
         }
-        if(!wasLoaded) releaseSearchKey(key);
+        if(!wasLoaded) releaseSearchKey(key,entries);
         els.loading.textContent='搜索中 '+(i+1)+'/'+candidates.length+' · 命中 '+matches.length;
         if(isTruncated) break;
       }
     }finally{
-      loadedKeys.forEach(releaseSearchKey);
+      loadedKeys.forEach(function(item){ releaseSearchKey(item.key,item.entries); });
       if(token===state.searchToken) els.loading.style.display='none';
     }
     if(token!==state.searchToken) return;
@@ -931,6 +1040,7 @@
     setSearchResults(matches,analysis,isTruncated);
   }
   function runGlobalSearch(query){
+    if(!state.started){ showStartGate(); return Promise.resolve(); }
     var analysis=analyzeSearchQuery(query);
     if(analysis.error){
       state.searchToken+=1;
@@ -944,6 +1054,7 @@
       return;
     }
     var token=++state.searchToken;
+    state.viewToken+=1;
     return loadSearchIndex().then(function(){
       if(token!==state.searchToken) return;
       analysis=analyzeSearchQuery(query);
@@ -1072,6 +1183,10 @@
     state.results=out;
   }
   function rerender(){
+    if(state.mode==='idle'){
+      if(pointLayer) pointLayer.setData([],[],null);
+      return;
+    }
     if(state.mode==='overview'){
       els.stats.textContent='概览 · 约 '+state.overviewTotal.toLocaleString()+' 点 · '+state.overviewCells.length.toLocaleString()+' 格';
       renderMapPoints();
@@ -1152,9 +1267,14 @@
       var o=document.createElement('option'); o.value=d.id; o.textContent=d.label; els.dispMode.appendChild(o);
     });
     els.dispMode.value=state.dispMode;
-    els.dispMode.onchange=function(){ state.dispMode=els.dispMode.value; applyDispMode(); };
+    els.dispMode.disabled=!state.started;
+    els.dispMode.onchange=function(){
+      if(!state.started || state.initializingView){ els.dispMode.value=state.dispMode; return; }
+      state.dispMode=els.dispMode.value; applyDispMode();
+    };
   }
   function applyDispMode(){
+    if(!state.started || state.initializingView) return;
     // Manual mode changes must not participate in zoom-triggered auto fallback.
     state.autoLoaded=false;
     state.dispAuto=false;
@@ -1341,8 +1461,12 @@
   var searchTimer=null;
   els.search.addEventListener('input',function(){
     clearTimeout(searchTimer);
+    if(!state.started){ showStartGate(); return; }
+    state.searchToken+=1;
+    els.loading.style.display='none';
     var query=els.search.value.trim();
     if(!query){
+      els.loading.style.display='none';
       if(state.searchActive) restoreSearchView(); else rerender();
       return;
     }
@@ -1361,6 +1485,12 @@
   els.road.addEventListener('change',rerender);
   els.nationLoadBtn.addEventListener('click',function(){
     if(state.gateRun){ var r=state.gateRun; state.gateRun=null; r(); }
+  });
+  els.startNationBtn.addEventListener('click',startSelectedView);
+  els.startPickBtn.addEventListener('click',function(){
+    if(state.startLoading) return;
+    if(els.province.focus) els.province.focus();
+    els.sgSub.textContent='在顶部选择全国或省份；选择省份后可再选择城市，然后点击“加载所选视图”。';
   });
   els.city.addEventListener('change',function(){ selectCity(els.city.value); });
   els.county.addEventListener('change',function(){
@@ -1395,26 +1525,12 @@
     return;
   }
   els.search.disabled=true;
-  els.loading.style.display='block';
-  els.loading.textContent='加载并校验地图数据…';
-  Promise.resolve().then(function(){
-    if(!window.PanoAssets) throw new Error('数据加载器加载失败，请刷新页面');
-    return Promise.all([
-      window.PanoAssets.loadScript('grid_all.js'),
-      window.PanoAssets.loadScript('hidden_pano.js')
-    ]);
-  }).then(function(){
-    initMap();
-    selectProvince('全国');
-    els.search.disabled=false;
-    els.loading.style.display='none';
-    setTimeout(function(){ if(map) map.invalidateSize(); },300);
-  }).catch(function(error){
-    els.loading.style.display='none';
-    els.stats.textContent='数据加载失败: '+error.message;
-    els.mapHint.textContent='请刷新页面或使用支持 WebAssembly/安全解压的现代浏览器。'+error.message;
-    console.error(error);
-  });
+  els.loading.style.display='none';
+  buildProvinceSelect(true);
+  fillCitySelect([], '');
+  initMap();
+  syncHeaderHeight();
+  showStartGate();
 })();
 </script>
 </body>

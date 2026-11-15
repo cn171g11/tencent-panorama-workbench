@@ -43,6 +43,10 @@ if (samplePath) {
   target = JSON.parse(source.slice(source.indexOf(marker) + marker.length).trim().replace(/;\s*$/, ''))[0];
   targetCollection = '532600';
 }
+const initialWidth = Number(arg('--initial-width', 1280));
+const startupCity = arg('--startup-city', targetCollection);
+assert(Number.isSafeInteger(initialWidth) && initialWidth >= 320 && initialWidth <= 2560, 'Invalid initial viewport width');
+assert(/^[A-Za-z0-9_]+$/.test(startupCity), 'Invalid startup city');
 const forceWorker = args.includes('--force-brotli-worker');
 let server, browser, ws, nextId = 1;
 const pending = new Map(), requests = [], exceptions = [], localRequests = [], responses = [];
@@ -125,7 +129,7 @@ async function main() {
   });
   await send('Page.enable'); await send('Runtime.enable'); await send('Network.enable');
   await send('Network.setBlockedURLs', { urls: ['*is.autonavi.com*', '*map.gtimg.com*', '*dbankcdn.cn*'] });
-  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  await send('Emulation.setDeviceMetricsOverride', { width: initialWidth, height: 720, deviceScaleFactor: 1, mobile: initialWidth <= 680 });
   // Test-only instrumentation: preserve the real map, record native codec support and worker lifetime.
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `(function(){
     var value;Object.defineProperty(window,'L',{configurable:true,get:function(){return value;},set:function(v){value=v;if(v&&typeof v.map==='function'){var old=v.map;v.map=function(){var m=old.apply(this,arguments);window.__ASSET_TEST_MAP__=m;return m;};}}});
@@ -135,17 +139,38 @@ async function main() {
     var NativeWorker=window.Worker,stats={created:0,terminated:0,active:0,maxActive:0,urls:[]};window.__ASSET_WORKERS__=stats;
     if(NativeWorker)window.Worker=function(url,options){var w=new NativeWorker(url,options),closed=false;stats.created++;stats.active++;stats.maxActive=Math.max(stats.maxActive,stats.active);stats.urls.push(String(url));var end=w.terminate;w.terminate=function(){if(!closed){closed=true;stats.terminated++;stats.active--;}return end.call(w);};return w;};
   })();` });
+  const streetRequests = () => requests.filter(u => /\/(?:data_(?!meta|districts)[A-Za-z0-9_]+|hidden_pano|grid_all|pano_search_index)\.js(?:\.(?:gz|br))?(?:\?|$)/.test(u));
   await send('Page.navigate', { url: pageURL });
-  await until(() => evaluate(`Boolean(window.PANO_ASSET_MANIFEST&&['gzip','brotli'].includes(window.PANO_ASSET_MANIFEST.codec)&&window.__ASSET_TEST_MAP__&&document.getElementById('search')&&!document.getElementById('search').disabled&&document.getElementById('stats').textContent.includes('点'))`));
-  report.checks.boot = await evaluate(`({version:document.querySelector('.ver').textContent,total:Object.values(window.PANO_COUNT).reduce((a,b)=>a+b,0),files:Object.keys(window.PANO_ASSET_MANIFEST.files).length,codec:window.PANO_ASSET_MANIFEST.codec,manifestVersion:window.PANO_ASSET_MANIFEST.version,searchIndexLoaded:Boolean(window.PANO_SEARCH_INDEX),hiddenGame:window.PANO_CITY.hidden_game.length,stats:document.getElementById('stats').textContent})`);
+  await until(() => evaluate(`Boolean(window.__ASSET_TEST_MAP__&&document.getElementById('startGate')&&getComputedStyle(document.getElementById('startGate')).display!=='none'&&document.getElementById('search').disabled)`));
+  await delay(500);
+  report.checks.initial = await evaluate(`({version:document.querySelector('.ver').textContent,total:Object.values(window.PANO_COUNT).reduce((a,b)=>a+b,0),files:Object.keys(window.PANO_ASSET_MANIFEST.files).length,codec:window.PANO_ASSET_MANIFEST.codec,manifestVersion:window.PANO_ASSET_MANIFEST.version,searchDisabled:document.getElementById('search').disabled,province:document.getElementById('provinceSelect').value,loadDisabled:document.getElementById('startNationBtn').disabled,loadedPointCollections:Object.keys(window.PANO_CITY||{}).length,gridLoaded:Boolean(window.PANO_GRID_ALL),searchIndexLoaded:Boolean(window.PANO_SEARCH_INDEX),workerCount:window.__ASSET_WORKERS__.created})`);
+  assert.equal(report.checks.initial.version, expectedVersion); assert.equal(report.checks.initial.total, expectedTotal);
+  assert.equal(report.checks.initial.province, ''); assert.equal(report.checks.initial.loadDisabled, true);
+  assert.equal(report.checks.initial.loadedPointCollections, 0); assert.equal(report.checks.initial.gridLoaded, false);
+  assert.equal(report.checks.initial.searchIndexLoaded, false); assert.equal(report.checks.initial.workerCount, 0);
+  assert.equal(streetRequests().length, 0, 'Opening the page requested street data');
+  report.checks.initial.dialog = await evaluate(`(function(){var r=document.getElementById('startGate').getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:innerWidth,height:innerHeight};})()`);
+  assert(report.checks.initial.dialog.left >= 0 && report.checks.initial.dialog.right <= initialWidth && report.checks.initial.dialog.top >= 0 && report.checks.initial.dialog.bottom <= 720, 'Startup dialog overflows the viewport');
+  await evaluate(`(function(){var p=document.getElementById('provinceSelect');p.value='全国';p.dispatchEvent(new Event('change'));})()`);
+  assert.equal(streetRequests().length, 0, 'Choosing the national view requested data before confirmation');
+  const startupProvince = await evaluate(`window.PANO_META[${JSON.stringify(startupCity)}].province`);
+  await evaluate(`(function(){var p=document.getElementById('provinceSelect');p.value=${JSON.stringify(startupProvince)};p.dispatchEvent(new Event('change'));var c=document.getElementById('citySelect');c.value=${JSON.stringify(startupCity)};c.dispatchEvent(new Event('change'));})()`);
+  await delay(250);
+  assert.equal(streetRequests().length, 0, 'Preparing a province/city requested street data before confirmation');
+  report.checks.initial.streetRequests = []; report.checks.initial.selectionStreetRequests = [];
+  await evaluate(`document.getElementById('startNationBtn').click()`);
+  await until(() => evaluate(`!document.getElementById('search').disabled&&getComputedStyle(document.getElementById('startGate')).display==='none'&&document.getElementById('stats').textContent.includes('点')`));
+  report.checks.boot = await evaluate(`({version:document.querySelector('.ver').textContent,total:Object.values(window.PANO_COUNT).reduce((a,b)=>a+b,0),files:Object.keys(window.PANO_ASSET_MANIFEST.files).length,codec:window.PANO_ASSET_MANIFEST.codec,manifestVersion:window.PANO_ASSET_MANIFEST.version,searchIndexLoaded:Boolean(window.PANO_SEARCH_INDEX),loadedPointCollections:Object.keys(window.PANO_CITY||{}).length,province:document.getElementById('provinceSelect').value,city:document.getElementById('citySelect').value,stats:document.getElementById('stats').textContent})`);
   const codec = report.checks.boot.codec, suffix = codec === 'brotli' ? '.br' : '.gz';
   if (expectedCodec) assert.equal(codec, expectedCodec);
   assert.equal(report.checks.boot.manifestVersion, codec === 'brotli' ? 2 : 1);
   assert.equal(report.checks.boot.version, expectedVersion); assert.equal(report.checks.boot.total, expectedTotal);
-  assert.equal(report.checks.boot.files, expectedFiles); assert.equal(report.checks.boot.searchIndexLoaded, false); assert.equal(report.checks.boot.hiddenGame, 15);
-  assert(!requests.some(u => u.includes('pano_search_index.js' + suffix)), 'Search index downloaded before a query');
+  assert.equal(report.checks.boot.files, expectedFiles); assert.equal(report.checks.boot.searchIndexLoaded, false);
+  assert.equal(report.checks.boot.loadedPointCollections, 0); assert.equal(report.checks.boot.city, startupCity);
+  assert.deepEqual(streetRequests().map(u => new URL(u).pathname.split('/').pop()), ['grid_all.js' + suffix], 'Confirmation must request only the overview grid');
   await evaluate(`(function(){var p=document.getElementById('provinceSelect');p.value=window.PANO_META.hidden_game.province;p.dispatchEvent(new Event('change'));var c=document.getElementById('citySelect');c.value='hidden_game';c.dispatchEvent(new Event('change'));var d=document.getElementById('dispMode');d.value='points';d.dispatchEvent(new Event('change'));})()`);
   await until(() => evaluate(`Object.values(window.__ASSET_TEST_MAP__._layers).some(l=>l._hits&&l._hits.length===15)`));
+  assert.equal(await evaluate('window.PANO_CITY.hidden_game.length'), 15);
   report.checks.game = await evaluate(`(function(){var l=Object.values(window.__ASSET_TEST_MAP__._layers).find(l=>l._hits&&l._hits.length===15);return {points:l._hits.length,redFlags:l._hits.filter(p=>p[3]).length};})()`);
   assert.equal(report.checks.game.redFlags, 15);
   async function query(q, note) {

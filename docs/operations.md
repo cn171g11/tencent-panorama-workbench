@@ -14,7 +14,7 @@
 python -m http.server 8000 --directory .
 ```
 
-打开 `http://127.0.0.1:8000/city-viewer/`；测试发布产物时，将 `--directory`指定为实际构建输出。不要替换DeepSeek Harness GUI或启动另一个伪装为当前GUI的服务器。
+打开 `http://127.0.0.1:8000/city-viewer/`；首次只显示空地图和“先选择视图”提示。选择全国、省份或城市后点击“加载所选视图”，才读取街景网格；明细/隐藏/搜索数据继续按需读取。见 [按需启动说明](<viewer-on-demand-start-20261115.md>)。测试发布产物时，将 `--directory`指定为实际构建输出。不要替换DeepSeek Harness GUI或启动另一个伪装为当前GUI的服务器。
 
 必要前端包含查看器/报告、小型metadata/districts、asset-loader、asset-manifest、brotli-decoder/worker以及 [固定WASM库](<../city-viewer/vendor/brotli-wasm/NOTICE.md>)。Brotli资源以`.js.br`下载，压缩响应不要求服务器自动设置Content-Encoding；加载器验证两层哈希后主动解码。
 

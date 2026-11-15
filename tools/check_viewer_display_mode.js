@@ -10,7 +10,7 @@ let pendingLoad;
 let fallbackCount = 0;
 let renderCount = 0;
 const context = vm.createContext({
-  state: { mode: "overview", dispMode: "points", autoLoaded: true, dispAuto: true },
+  state: { started: true, initializingView: false, mode: "overview", dispMode: "points", autoLoaded: true, dispAuto: true },
   map: { getZoom: () => zoom },
   els: {
     city: {}, loading: { style: {} },

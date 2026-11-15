@@ -11,11 +11,12 @@ assert(!/<script src="(?:grid_all|hidden_pano|pano_search_index)\.js"/.test(html
 new vm.Script(inline);
 
 class Element {
-  constructor() { this.style = {}; this.value = ''; this.options = []; this.offsetHeight = 52; this.events = {}; }
+  constructor() { this.style = {}; this.value = ''; this.options = []; this.offsetHeight = 52; this.events = {}; this.disabled = false; }
   set innerHTML(v) { this.html = v; this.options = []; }
   get innerHTML() { return this.html || ''; }
   appendChild(child) { this.options.push(child); }
   addEventListener(name, fn) { this.events[name] = fn; }
+  focus() { this.focused = true; }
 }
 const idA = '30111018141016121817800', idB = '30111018141016121837900';
 const idH = '30111018141016121857600';
@@ -36,6 +37,7 @@ const document = {
   head: { appendChild() { throw Error('Large scripts must use PanoAssets loader'); } },
 };
 const win = {
+  PANO_CITY: {},
   PANO_META: {
     '500000': { name: '重庆市', province: '重庆市', pref: '500000' },
     hidden_500000: { name: '重庆·隐藏', province: '重庆市', pref: 'hidden_500000' },
@@ -50,7 +52,8 @@ win.PanoAssets = { async loadScript(name) {
   if (name === 'grid_all.js') {
     win.PANO_GRID_ALL = { '500000': [[26500,7300,2]], hidden_500000: [[26500,7300,1]], hidden_game: [[0,0,1]] };
   } else if (name === 'hidden_pano.js') {
-    win.PANO_CITY = { hidden_500000: [clone(originals[2])], hidden_game: [clone(originals[3])] };
+    win.PANO_CITY.hidden_500000 = [clone(originals[2])];
+    win.PANO_CITY.hidden_game = [clone(originals[3])];
   } else if (name === 'data_500000.js') {
     win.PANO_CITY['500000'] = clone(originals.slice(0,2));
   } else if (name === 'pano_search_index.js') {
@@ -62,19 +65,32 @@ win.PanoAssets = { async loadScript(name) {
     };
   } else throw Error('Unexpected fixture asset: '+name);
 } };
-const exposed = inline.replace(/\}\)\(\);\s*$/, `window.__TEST__={state:state,els:els,loadCityScript:loadCityScript,loadSearchIndex:loadSearchIndex,runGlobalSearch:runGlobalSearch,restoreSearchView:restoreSearchView,computeResults:computeResults,isHiddenEntry:isHiddenEntry,renderMapPoints:renderMapPoints,setRenderContext:function(m,p){map=m;pointLayer=p;}};})();`);
+const exposed = inline.replace(/\}\)\(\);\s*$/, `window.__TEST__={state:state,els:els,startSelectedView:startSelectedView,selectProvince:selectProvince,selectCity:selectCity,loadCityScript:loadCityScript,loadSearchIndex:loadSearchIndex,runGlobalSearch:runGlobalSearch,restoreSearchView:restoreSearchView,computeResults:computeResults,isHiddenEntry:isHiddenEntry,renderMapPoints:renderMapPoints,setRenderContext:function(m,p){map=m;pointLayer=p;}};})();`);
 assert(exposed !== inline);
 const context = vm.createContext({ window:win,document,navigator:{userAgent:''},console,setTimeout,clearTimeout });
 const turn = () => new Promise(resolve => setTimeout(resolve, 0));
 (async function(){
   vm.runInContext(exposed,context);
-  assert.equal(elements.search.disabled,true,'Search must wait for initial grid/hidden assets');
-  for(let i=0;i<4;i++) await turn();
+  const t=win.__TEST__;
+  assert.equal(elements.search.disabled,true,'Search must wait for explicit view confirmation');
+  assert.equal(t.state.started,false);
+  assert.equal(t.state.mode,'idle');
+  assert.equal(elements.provinceSelect.value,'');
+  assert.equal(elements.startNationBtn.disabled,true);
+  assert.equal(elements.startGate.style.display,'block');
+  await turn();
+  await t.runGlobalSearch(idA);
+  assert.deepEqual(calls,[],'Idle boot and guarded queries must not request panorama assets');
+  t.selectProvince('重庆市'); t.selectCity('500000');
+  assert.equal(t.state.cityFilter,'500000');
+  assert.deepEqual(calls,[],'Preparing province/city selection must use metadata only');
+  t.selectProvince('全国');
+  await t.startSelectedView();
+  assert.equal(t.state.started,true);
   assert.equal(elements.search.disabled,false);
   assert(elements.stats.textContent.includes('3 点'));
   assert(elements.provinceSelect.innerHTML.includes('腾讯游戏街景'));
-  assert.deepEqual(calls,['grid_all.js','hidden_pano.js'],'Index should remain lazy until a query');
-  const t=win.__TEST__;
+  assert.deepEqual(calls,['grid_all.js'],'Explicit confirmation must load only the grid, not hidden/raw/search data');
   await t.runGlobalSearch(idA);
   assert.equal(t.state.results.length,1); assert.equal(t.state.results[0][0],idA);
   assert(!win.PANO_CITY['500000'],'Search should release newly loaded point arrays');
@@ -84,6 +100,14 @@ const turn = () => new Promise(resolve => setTimeout(resolve, 0));
   assert(calls.filter(n=>n==='data_500000.js').length>cityLoads,'Released cities must be reloadable');
   await t.runGlobalSearch('Ｇ２１９');
   assert.equal(t.state.results.length,1); assert.equal(t.state.results[0][0],idA);
+  await t.runGlobalSearch('隐藏路');
+  assert.equal(t.state.results.length,1); assert.equal(t.state.results[0][0],idH);
+  const cjkCalls=calls.length;
+  await t.runGlobalSearch('不存在的中文道路');
+  assert.equal(t.state.results.length,0);
+  assert.equal(calls.length,cjkCalls,'CJK index miss must not scan every city');
+  await t.runGlobalSearch('路B');
+  assert.equal(t.state.results.length,1); assert.equal(t.state.results[0][0],idB);
   await t.runGlobalSearch('2014-10');
   assert.equal(t.state.results.length,2);
   await t.runGlobalSearch('@16-20:SCENE');
@@ -113,5 +137,5 @@ const turn = () => new Promise(resolve => setTimeout(resolve, 0));
   t.setRenderContext({invalidateSize(){}}, {setData(base,hits){renders.push(hits);}});
   t.renderMapPoints(); assert.equal(renders.at(-1).filter(p=>p[3]).length,2,'Hidden/game markers lost');
   assert.equal(JSON.stringify(originals),before,'Fixture source was mutated');
-  console.log('PASS: lazy boot/index loading, panoid/@/road/date/coordinate queries, city/county filters, error/retry, hidden/game markers');
+  console.log('PASS: idle boot/no panorama requests, metadata-only selection, explicit grid-only confirmation, lazy panoid/@/CJK/road/date/coordinate queries, city/county filters, error/retry, hidden/game markers');
 })().catch(error=>{console.error(error);process.exitCode=1;});
