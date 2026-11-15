@@ -200,17 +200,15 @@
 
 ---
 
-## 7. 区域与线路资料
+## 7. 区域与线路历史资料
 
-早期单城扫描（`mohe/`、`erguna/`、`gaochun/`、`jgdaq/`、`tahe/`）与国道/线路工作台的点位已**全部并入
-`city-viewer`**（早期集合 `data_mohe/erguna/jgdaq/tahe.js` 与北京/天津/上海/重庆等 21 个区县遗留层
-已合并进正式城市层后删除）。各目录只保留复现所需的边界与线路文件：
+已完成的腾讯旧点位归并沿用[既有合并记录](<docs/gansu-heilongjiang-import-20261103.md#L27-L40>)。2026-11-15 仅整理当前仓库根目录：将 **27 份历史原件**收拢，退休 **8 个旧工作台页面与 1 张预览图**；正式查看器、点位原字节、版本与线上部署不变，不重新导入或重扫旧 SID。
 
-- 区域：`mohe/`、`erguna/`、`gaochun/`、`jgdaq/`、`tahe/`、`huma/`、`xinlin/` 保留 `*-boundary.geojson` 与 `README.md`；
-- 线路：`g101/`、`g102/`、`g103/`、`g106/`、`g212/`、`g312/` 保留 `index.html`、`*-osm-route.geojson`、`*-tencent-lines.geojson`；
-- `s341/`、`lishui-panorama/` 保留 `index.html` 与百度街景数据（百度未并入腾讯集合，见 §8）。
+- [腾讯区域与线路归档](<city-viewer/legacy/tencent/>)：7 个区域的边界与历史说明，以及 G101/G102/G103/G106/G212/G312、南京溧水的线路 GeoJSON。**溧水是腾讯资料，不是百度资料**；旧边界和线路几何不等同于正式点位数组，保留原件。
+- [S341 百度原件](<city-viewer/legacy/baidu/s341/s341-baidu-panoramas.json>)：独立保留 1,718 个百度街景记录，不属于腾讯正式集合。整个[历史归档](<city-viewer/legacy/>)均不加载、不发布。
+- [新林历史边界](<city-viewer/legacy/tencent/xinlin/xinlin-boundary.geojson>)的属性实际写有“漠河县 / 232723 / 2017”，与[历史说明](<city-viewer/legacy/tencent/xinlin/README.md>)所称新林区冲突；只保留并注明疑点，不据文件名修正或导入。历史“未扫描/待恢复”不自动成为当前任务。
 
-原始扫描分片、状态文件与日志已清理，完整数据在 `city-viewer/`（全库 sid 唯一，重复 0）。
+逐文件去向、大小、哈希与可回滚依据见[归档清单](<city-viewer/legacy/inventory.json>)及[本次收拢说明](<docs/repository-cleanup-20261115.md>)。原始点位分片和扫描状态已在此前整理中退出这些旧目录；本次不改变独立旧站迁移仓库或任何其他 GitHub 仓库。
 
 ---
 
@@ -220,7 +218,7 @@
 - 仅采集元数据，未上传任何街景图片；图片版权归腾讯 / 百度所有，仅供研究用途。
 - 百度（`baidu_pano`）与腾讯（`qq_pano`）数据来源、id 体系、坐标系不同，**不得混入同一集合**。
 - 底图需自备 Key（天地图等）；GitHub Pages 无法隐藏浏览器端密钥，请使用限制 Origin 的 Key。
-- 线路底图坐标随底图坐标系自动换算；OSM 仅作线路数据来源（ODbL）。
+- 历史线路 GeoJSON 自带来源与坐标说明，不因归档改写坐标；OSM 线路几何沿用原始来源标注（ODbL）。
 
 ---
 

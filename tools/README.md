@@ -28,7 +28,7 @@ $env:PANO_SCAN_ROOT = 'D:\pano'
 $env:PANO_VIEWER_DIR = 'D:\pano\viewer'
 ```
 
-Before using them for a new area, verify the request throttle for the current service behavior.
+Before using them for a new area, verify the request throttle for the current service behavior. Historical scan boundaries and READMEs now live in the [Tencent legacy archive](<../city-viewer/legacy/tencent/>), not root-level regional directories. That archive is read-only reference material: old README file lists and interrupted scans do not authorize new collection, and newly generated outputs must stay outside it. Use the current merge/validation process for any separately authorized import; do not recreate the deleted regional point layers.
 
 ## `g212-scan.mjs`
 
@@ -40,6 +40,8 @@ node tools/g212-scan.mjs <key-file> --route-only
 ```
 
 The key file is read locally. The script logs only a short fingerprint and never prints the key value. Keep key files outside the repository.
+
+The former G212 browser workbench was retired during the [root-directory cleanup](<../docs/repository-cleanup-20261115.md>); this CLI is retained. The original [G212 OSM geometry](<../city-viewer/legacy/tencent/g212/g212-osm-route.geojson>) is source-only evidence, not a scanner output directory. This script writes its default route file relative to the working directory: run new, separately authorized scans from an external local directory and set output paths explicitly; never run it in the archive or use cleanup as permission to query endpoints.
 
 ## General Rules
 

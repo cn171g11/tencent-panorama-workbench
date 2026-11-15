@@ -27,6 +27,8 @@ from typing import Callable
 from urllib.parse import unquote, urlsplit
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+# Historical originals are source-only, never part of the Pages artifact.
+ARCHIVE_DIRECTORY = "legacy"
 FRONTEND_FILES = (
     "index.html", "report.html", "changelog.js", "data_meta.js",
     "data_districts.js", "asset-loader.js", "pano.html",
@@ -146,14 +148,20 @@ class _StaticReferences(HTMLParser):
             self.urls.append(values["href"])
 
 
+def _is_archive_path(path: Path) -> bool:
+    return bool(path.parts) and path.parts[0] == ARCHIVE_DIRECTORY
+
+
 def _static_names(source: Path, raw_names: set[str], codec: str = "gzip") -> list[str]:
     names = set(FRONTEND_FILES)
     if codec == "brotli":
         names.update(BROTLI_STATIC_FILES)
-    names.update(path.relative_to(source).as_posix() for path in source.rglob("*.css"))
-    # Preserve locally linked CSS / scripts (including vendor scripts), but never
-    # accidentally publish a compressed data asset's raw JavaScript counterpart.
-    for page in ("index.html", "report.html"):
+    names.update(path.relative_to(source).as_posix() for path in source.rglob("*.css")
+                 if not _is_archive_path(path.relative_to(source)))
+    # Keep the existing discovery rule (index/report) and resulting publication
+    # bytes. Every published HTML page is also checked so pano.html cannot pull
+    # source-only archived scripts/styles into an active page.
+    for page in (name for name in FRONTEND_FILES if name.endswith(".html")):
         parser = _StaticReferences()
         parser.feed(_require_file(source, page).read_text(encoding="utf-8-sig"))
         for value in parser.urls:
@@ -164,8 +172,10 @@ def _static_names(source: Path, raw_names: set[str], codec: str = "gzip") -> lis
             path = Path(relative)
             if relative.startswith(("/", "\\")) or "\\" in relative or ".." in path.parts:
                 raise BuildError(f"Local static reference must stay inside city-viewer: {page}")
+            if _is_archive_path(path):
+                raise BuildError(f"Local static reference targets source-only legacy archive: {page}: {value}")
             name = path.as_posix()
-            if name not in raw_names and name != "asset-manifest.js":
+            if page in ("index.html", "report.html") and name not in raw_names and name != "asset-manifest.js":
                 names.add(name)
     for name in sorted(names):
         _require_file(source, name)

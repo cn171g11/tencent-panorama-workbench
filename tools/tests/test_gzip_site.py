@@ -123,6 +123,62 @@ class GzipSiteTests(unittest.TestCase):
         self.assertEqual({p.relative_to(self.output).as_posix() for p in self.output.rglob("*")
                           if p.is_file()}, expected)
 
+    def assert_legacy_archive_is_not_published(self):
+        # Archive even CSS, data-looking names and another provider's originals;
+        # none may join the manifest, copied static files or published inventory.
+        archive = {
+            "legacy/README.md": b"source-only historical originals\r\n",
+            "legacy/tencent/mohe/theme.css": b"body { color: purple; }\r\n",
+            "legacy/tencent/mohe/widget.js": b"window.archived=true;\n",
+            "legacy/tencent/mohe/data_stray.js": b"historical, not a live shard",
+            "legacy/baidu/s341/s341-baidu-panoramas.json": b'[{"provider":"baidu"}]\r\n',
+        }
+        for name, raw in archive.items():
+            path = self.source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+        for name in ("legacy-extra/theme.css", "vendor/legacy/theme.css"):
+            path = self.source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"/* active, not the root legacy archive */\n")
+        snapshot = {p.relative_to(self.source): p.read_bytes()
+                    for p in self.source.rglob("*") if p.is_file()}
+        report = self.build()
+        self.assertEqual(set(report["files"]), self.raw_names)
+        self.assertEqual(report["pointFiles"], len(self.point_names))
+        self.assertFalse((self.output / "city-viewer/legacy").exists())
+        self.assertFalse(any(name.startswith("legacy/") for name in report["staticFiles"]))
+        self.assertFalse(any(name.startswith("city-viewer/legacy/") for name in report["outputFiles"]))
+        for name in ("legacy-extra/theme.css", "vendor/legacy/theme.css"):
+            self.assertIn(name, report["staticFiles"])
+            self.assertEqual((self.output / "city-viewer" / name).read_bytes(),
+                             (self.source / name).read_bytes())
+        self.assertEqual(snapshot, {p.relative_to(self.source): p.read_bytes()
+                                    for p in self.source.rglob("*") if p.is_file()})
+
+    def assert_legacy_static_references_are_rejected(self):
+        for page in ("index.html", "report.html", "pano.html"):
+            original = (self.source / page).read_bytes()
+            for reference in (
+                b'<script src="legacy/tencent/old.js"></script>',
+                b'<link rel="stylesheet" href="./legacy/baidu/old.css?v=1#style">',
+                b'<script src="%6cegacy%2ftencent%2fold.js"></script>',
+            ):
+                with self.subTest(page=page, reference=reference):
+                    (self.source / page).write_bytes(reference)
+                    try:
+                        with self.assertRaisesRegex(publisher.BuildError, "source-only legacy archive"):
+                            self.build()
+                        self.assertFalse(self.output.exists())
+                    finally:
+                        (self.source / page).write_bytes(original)
+
+    def test_legacy_archive_is_not_published(self):
+        self.assert_legacy_archive_is_not_published()
+
+    def test_legacy_static_references_are_rejected(self):
+        self.assert_legacy_static_references_are_rejected()
+
     def test_gzip_and_manifest_are_deterministic_across_worker_counts(self):
         self.build(workers=1)
         other = self.root / "second-publication"

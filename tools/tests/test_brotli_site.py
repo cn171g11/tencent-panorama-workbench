@@ -17,6 +17,8 @@ import build_gzip_site as publisher
 class BrotliSiteTests(unittest.TestCase):
     write_metadata = gzip_fixtures.GzipSiteTests.write_metadata
     manifest = gzip_fixtures.GzipSiteTests.manifest
+    assert_legacy_archive_is_not_published = gzip_fixtures.GzipSiteTests.assert_legacy_archive_is_not_published
+    assert_legacy_static_references_are_rejected = gzip_fixtures.GzipSiteTests.assert_legacy_static_references_are_rejected
 
     def setUp(self):
         gzip_fixtures.GzipSiteTests.setUp(self)
@@ -75,6 +77,12 @@ class BrotliSiteTests(unittest.TestCase):
         self.assertEqual(report["siteBytes"], sum(p.stat().st_size for p in self.output.rglob("*") if p.is_file()))
         self.assertEqual(set(report["outputFiles"]), {p.relative_to(self.output).as_posix() for p in self.output.rglob("*") if p.is_file()})
         self.assertEqual(report, json.loads((self.output / "build-report.json").read_text("utf-8")))
+
+    def test_legacy_archive_is_not_published(self):
+        self.assert_legacy_archive_is_not_published()
+
+    def test_legacy_static_references_are_rejected(self):
+        self.assert_legacy_static_references_are_rejected()
 
     def test_more_than_one_chunk_and_binary_roundtrip(self):
         raw = bytes(range(256)) * (publisher.CHUNK_SIZE // 256 + 1025) + b"\x00\xfffinal"

@@ -1,0 +1,361 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-15",
+  "sourceCommit": "03de8f0936612bb8ccaa06836eab7d033d755393",
+  "retiredRootDirectories": [
+    "erguna",
+    "g101",
+    "g102",
+    "g103",
+    "g106",
+    "g212",
+    "g312",
+    "gaochun",
+    "huma",
+    "jgdaq",
+    "lishui-panorama",
+    "mohe",
+    "s341",
+    "tahe",
+    "xinlin"
+  ],
+  "activeViewerBaseline": {
+    "version": "v2.45.0",
+    "points": 59436440,
+    "dataCommit": "9c751bd80b941096a4cae6df0c93fa1298d6a76f"
+  },
+  "totals": {
+    "sourceFiles": 36,
+    "sourceBytes": 29868469,
+    "archivedFiles": 27,
+    "archivedBytes": 29448064,
+    "retiredFiles": 9,
+    "retiredBytes": 420405
+  },
+  "files": [
+    {
+      "originalPath": "erguna/README.md",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/erguna/README.md",
+      "provider": "tencent",
+      "bytes": 1303,
+      "sha256": "a7efdf103792646d4effaaf616e8a0666fc3c53f8577a2ad02f4ef013972493c",
+      "gitBlob": "6df0a10508e84994085ea2388aeb21d047385854"
+    },
+    {
+      "originalPath": "erguna/erguna-boundary.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/erguna/erguna-boundary.geojson",
+      "provider": "tencent",
+      "bytes": 27228,
+      "sha256": "d2afca62258910aaaee0da7deb32f9e2f34e6d48c16022d5b9ca352664bdb534",
+      "gitBlob": "6bea4519063e3d940507980988a4e270af0e05ed"
+    },
+    {
+      "originalPath": "g101/g101-osm-route.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g101/g101-osm-route.geojson",
+      "provider": "tencent",
+      "bytes": 385852,
+      "sha256": "24899c2004054aabc3195d8748df8b9063abd0be7f16f998ed9e33610d5bd4d5",
+      "gitBlob": "05ff491df8725cb805ae761afdd6992fcfc8b8c0"
+    },
+    {
+      "originalPath": "g101/g101-tencent-lines.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g101/g101-tencent-lines.geojson",
+      "provider": "tencent",
+      "bytes": 1617016,
+      "sha256": "74d8ae7d6c56b19bc04f8d299e5491a1792b6837ad324293bd5259638069567a",
+      "gitBlob": "70ffc889dd997c1e693cc65b7804a1b1f01808bc"
+    },
+    {
+      "originalPath": "g101/index.html",
+      "action": "retire",
+      "path": null,
+      "provider": "tencent",
+      "bytes": 50606,
+      "sha256": "44deddb82d7439d9f298b6b5753117101df7f90b094993ff37df77769b0895b4",
+      "gitBlob": "bb788c38352e065dc229f66a779c441affe2447c"
+    },
+    {
+      "originalPath": "g102/g102-osm-route.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g102/g102-osm-route.geojson",
+      "provider": "tencent",
+      "bytes": 820701,
+      "sha256": "8e1d353a40a459b767dfb1b176b79ecc6fc339651e01ddd896f3a10bdc2af285",
+      "gitBlob": "c5ae72579de51878193b7ba639bc7d4928f81ef5"
+    },
+    {
+      "originalPath": "g102/g102-tencent-lines.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g102/g102-tencent-lines.geojson",
+      "provider": "tencent",
+      "bytes": 2985173,
+      "sha256": "a4fb0ca16e985f289a7f84563b06461786f26f57965b9fca7c8e0435b222c055",
+      "gitBlob": "9900f8d3f12a97a09f9ea3a4698edaef704a6784"
+    },
+    {
+      "originalPath": "g102/index.html",
+      "action": "retire",
+      "path": null,
+      "provider": "tencent",
+      "bytes": 50606,
+      "sha256": "1d61a9fdd17e17fbae1f905616005bcca2330acab91e4bfc1d8452693a4914f1",
+      "gitBlob": "05f3f104d571302a71ea2e6035a43c66f825a599"
+    },
+    {
+      "originalPath": "g103/g103-osm-route.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g103/g103-osm-route.geojson",
+      "provider": "tencent",
+      "bytes": 240061,
+      "sha256": "ad62caf197918bf55720512a34976acd201b16ee0543b5872d893c2b6893ce55",
+      "gitBlob": "c6fb78323f323bdb4e36e4092bf5f32296034a07"
+    },
+    {
+      "originalPath": "g103/g103-tencent-lines.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g103/g103-tencent-lines.geojson",
+      "provider": "tencent",
+      "bytes": 1325323,
+      "sha256": "aa785376e9c2d5fc927ec893b88cbda05768d0e75991a29e2b5f24c45cd71717",
+      "gitBlob": "88802e63bb34804463f11804fb2ba3c9a6f0a4ae"
+    },
+    {
+      "originalPath": "g103/index.html",
+      "action": "retire",
+      "path": null,
+      "provider": "tencent",
+      "bytes": 50606,
+      "sha256": "0c5270a7f4d4aff2ce83be9c137f9c7911a7b23d3b241421b7d7d737ec5e24f1",
+      "gitBlob": "10bda499aff6f2f9e90ede1fc0846483d3427091"
+    },
+    {
+      "originalPath": "g106/g106-osm-route.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g106/g106-osm-route.geojson",
+      "provider": "tencent",
+      "bytes": 1292651,
+      "sha256": "7df4616492a5fd2caf120facec7ea3a04ebecd38a60cd8e6c94e733eecb43a8d",
+      "gitBlob": "5cc93789ff631aa3d2a3d4610f2cc686d6925e96"
+    },
+    {
+      "originalPath": "g106/g106-tencent-lines.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g106/g106-tencent-lines.geojson",
+      "provider": "tencent",
+      "bytes": 2384605,
+      "sha256": "e023d64e5272a88b666773ca767401be9768c481e2aacc670943b14033da85cc",
+      "gitBlob": "271ffc699a6d1c73a8cc36d77dace71c2552f91b"
+    },
+    {
+      "originalPath": "g106/index.html",
+      "action": "retire",
+      "path": null,
+      "provider": "tencent",
+      "bytes": 50606,
+      "sha256": "83e84d294c487c8bc1b8457abda343e02882b6b7fbfd4cbd429596a657814411",
+      "gitBlob": "3462b5f7f3ab7c2a0e85dcec16050acde1728ac7"
+    },
+    {
+      "originalPath": "g212/g212-osm-route.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g212/g212-osm-route.geojson",
+      "provider": "tencent",
+      "bytes": 1324925,
+      "sha256": "9f0a8bc756f36263b1c25ffc504f697f473dbf3f59f4255b017411f5fd7f9e0d",
+      "gitBlob": "de62482514dd2d5320ecc9e3bca9d71ad83a5025"
+    },
+    {
+      "originalPath": "g212/index.html",
+      "action": "retire",
+      "path": null,
+      "provider": "tencent",
+      "bytes": 64260,
+      "sha256": "d40e48cc9cbc7cfac9cefb7a5831270d7e80bf2f9fdb36e64e2e18904c91c3ec",
+      "gitBlob": "ce247436fe8fe8ea9d4f4e7f1cbad03490e0aaef"
+    },
+    {
+      "originalPath": "g312/g312-osm-route.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g312/g312-osm-route.geojson",
+      "provider": "tencent",
+      "bytes": 2385679,
+      "sha256": "bb46780796245d741229b410e234b9e65c72db2c19261ebba1adfb5297df63f4",
+      "gitBlob": "13cc9f80acc64132dd213dd8994b153d70b63c8a"
+    },
+    {
+      "originalPath": "g312/g312-tencent-lines.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/g312/g312-tencent-lines.geojson",
+      "provider": "tencent",
+      "bytes": 4990464,
+      "sha256": "3a4077f84ee4698d96537e33663807aca4c469a7b942ddd868ffcf5b964351a4",
+      "gitBlob": "36f98ffe82d840dd2ebcdecf0e2c48f010efb336"
+    },
+    {
+      "originalPath": "g312/index.html",
+      "action": "retire",
+      "path": null,
+      "provider": "tencent",
+      "bytes": 50607,
+      "sha256": "16f64cddab9d1e460f76638308017c61b01524dbca13ed24ee0357b2adc9353d",
+      "gitBlob": "01a8b12b8e108e31a90e81a0e93566758af84243"
+    },
+    {
+      "originalPath": "gaochun/README.md",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/gaochun/README.md",
+      "provider": "tencent",
+      "bytes": 2364,
+      "sha256": "8e6610e401d07e979bd33fc7c4a084e4ec8c3bf7d561bcbf388070f8683c0023",
+      "gitBlob": "4b527d6379f61cf794018a83cd91a4624943d3b1"
+    },
+    {
+      "originalPath": "gaochun/gaochun-boundary.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/gaochun/gaochun-boundary.geojson",
+      "provider": "tencent",
+      "bytes": 14959,
+      "sha256": "d447461fc64f67403ffb59e50f04c0f1205bf7a7aaf2bed2242d6f15dc5fdd0e",
+      "gitBlob": "ba050d9776ca2eac70d0a5059a157de285613ece"
+    },
+    {
+      "originalPath": "huma/README.md",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/huma/README.md",
+      "provider": "tencent",
+      "bytes": 1001,
+      "sha256": "46ded949f1cc6930f4f989493e5493792b35efc0c0230dcbe876c941a606f5b2",
+      "gitBlob": "ac1c232dead8da8c02edd93f8b12cf26afce29a2"
+    },
+    {
+      "originalPath": "huma/huma-boundary.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/huma/huma-boundary.geojson",
+      "provider": "tencent",
+      "bytes": 38113,
+      "sha256": "7dcebd00005fb3f50ab07cd27a11eaf54125c557d38a18d0a7efdf9714c52ef9",
+      "gitBlob": "c17950cd4b968d72762b198e8f0e4488af74dd76"
+    },
+    {
+      "originalPath": "jgdaq/README.md",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/jgdaq/README.md",
+      "provider": "tencent",
+      "bytes": 1752,
+      "sha256": "edd5d15d913570d9842b8a668fe61005a38cd1b7631d20d4433f7ee668aee23d",
+      "gitBlob": "5e115425a92a9a942179668565baf7e4330a652d"
+    },
+    {
+      "originalPath": "jgdaq/jgdaq-boundary.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/jgdaq/jgdaq-boundary.geojson",
+      "provider": "tencent",
+      "bytes": 12030,
+      "sha256": "fe29541bc874667bfdfcd7699fb8dead3c976b8d5b461b156280c869dc3eab8f",
+      "gitBlob": "5b6eb827a86f127132d819715642eceb8b59c7a2"
+    },
+    {
+      "originalPath": "lishui-panorama/index.html",
+      "action": "retire",
+      "path": null,
+      "provider": "tencent",
+      "bytes": 49487,
+      "sha256": "1a853852a31354387a6b1e9e2f2b46c52eb56681a6b0866af672b5cbed30f4e4",
+      "gitBlob": "63b14398a1110483a4cc643c523220512725c261"
+    },
+    {
+      "originalPath": "lishui-panorama/lishui-tencent-lines.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/lishui-panorama/lishui-tencent-lines.geojson",
+      "provider": "tencent",
+      "bytes": 1230431,
+      "sha256": "45695fa5595dc412a6ef9651586f02d1705e303a0ef0e1062f45b2605aaa245e",
+      "gitBlob": "cfa3ecd20eabde468bf03d17bf42368df82c0526"
+    },
+    {
+      "originalPath": "mohe/README.md",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/mohe/README.md",
+      "provider": "tencent",
+      "bytes": 1285,
+      "sha256": "79fa55495f3cef8dc79356b32e2879f03d18b2feae1c4f8a2cfbba9ce4348e89",
+      "gitBlob": "ccdecb63c4947732f6858fcbf44ab9fe513a476a"
+    },
+    {
+      "originalPath": "mohe/mohe-boundary.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/mohe/mohe-boundary.geojson",
+      "provider": "tencent",
+      "bytes": 42080,
+      "sha256": "e616cf24712c5bdb40dd96158e0c8aa884a5eed8b2e013fccf172bc901d6efa7",
+      "gitBlob": "f2610f8568004f2d0363ebdb61e4389bb21417fa"
+    },
+    {
+      "originalPath": "s341/index.html",
+      "action": "retire",
+      "path": null,
+      "provider": "baidu",
+      "bytes": 50253,
+      "sha256": "e2d155c2c59207ba7b6ae6de08cb78781e8b08093963756724f0b90d8bd7578d",
+      "gitBlob": "24a5e42ffe55847af15842c03b0de4ec38f7b986"
+    },
+    {
+      "originalPath": "s341/s341-baidu-panoramas.json",
+      "action": "archive",
+      "path": "city-viewer/legacy/baidu/s341/s341-baidu-panoramas.json",
+      "provider": "baidu",
+      "bytes": 7975395,
+      "sha256": "cb2f4c4290737663dde682a518729761da300f227acfbeb39637ca6378cb4c3d",
+      "gitBlob": "e7cc124f37db013d88575d59c60fa124929cafc8"
+    },
+    {
+      "originalPath": "s341/s341-workbench-preview.png",
+      "action": "retire",
+      "path": null,
+      "provider": "baidu",
+      "bytes": 3374,
+      "sha256": "37f47a5789260b0c96dd7e23c4eb42ad829608cbc56bb89d633e976eb8ac5777",
+      "gitBlob": "eab27b356daaaa59efd078d0218805b9e34277b7"
+    },
+    {
+      "originalPath": "tahe/README.md",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/tahe/README.md",
+      "provider": "tencent",
+      "bytes": 1979,
+      "sha256": "a37f24ce69b357ff49bc0f06ba31c6032251a09162adc857b66f7abca1bda83e",
+      "gitBlob": "40353c225bb185d14436bb51c69db3b673bfdc76"
+    },
+    {
+      "originalPath": "tahe/tahe-boundary.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/tahe/tahe-boundary.geojson",
+      "provider": "tencent",
+      "bytes": 19961,
+      "sha256": "55fa0d383f4c2b3f0dbffa43e04913ce919d26f6f23c1b61c7221c71e63e5e61",
+      "gitBlob": "c71bb59918d5c6e8ec4ae7a23247948582a28825"
+    },
+    {
+      "originalPath": "xinlin/README.md",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/xinlin/README.md",
+      "provider": "tencent",
+      "bytes": 1891,
+      "sha256": "f1841825c5e118e5ba21cfbefa0c0dda939234815d761f6e11200e8cc270ae92",
+      "gitBlob": "81e7d4503b0072a45fb234da98e0dbccd47ed993"
+    },
+    {
+      "originalPath": "xinlin/xinlin-boundary.geojson",
+      "action": "archive",
+      "path": "city-viewer/legacy/tencent/xinlin/xinlin-boundary.geojson",
+      "provider": "tencent",
+      "bytes": 323842,
+      "sha256": "ba7143b3fdcdecdf122c25f0da3bb2bfbd013b7d5cc9f60768baa95ae1846b77",
+      "gitBlob": "f94b77701e62d5e79171ff62214f57318657f0c6"
+    }
+  ]
+}

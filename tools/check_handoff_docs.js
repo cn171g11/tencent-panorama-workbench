@@ -11,8 +11,9 @@
  *   2. point total    — sum of PANO_COUNT       vs  AGENT.md  vs  agent_history.md
  *   3. changelog top  — city-viewer/changelog.js first entry must equal the page version
  *   4. recorded HEAD  — the commit named in both docs must be an ancestor of HEAD, and no
- *                       commit touching city-viewer/ may exist after it (doc-only or tool-only
- *                       commits after it are fine, otherwise every commit would invalidate itself)
+ *                       commit touching active city-viewer/ files may exist after it. Only the
+ *                       source-only city-viewer/legacy/ archive is excluded; doc/tool/archive-only
+ *                       commits are fine, otherwise every commit would invalidate itself.
  *   5. timeline order — the first versioned row of agent_history.md §3 must be the page version
  *
  * AGENT.md / agent_history.md are local-only files. When they are absent (fresh clone on
@@ -141,8 +142,10 @@ const checkRecordedHead = (file, pattern) => {
     add(`${file} 记录的提交 ${recorded} 不是 HEAD 的祖先（历史被重写？）`);
     return;
   }
-  // 关键判据：记录之后不应再有改动 city-viewer/ 的提交
-  const laterData = git(['rev-list', '--oneline', recorded + '..HEAD', '--', 'city-viewer/']);
+  // Only the source-only archive is exempt; active files, similarly named
+  // directories and mixed archive/data commits must still invalidate old notes.
+  const laterData = git(['rev-list', '--oneline', recorded + '..HEAD', '--',
+    'city-viewer/', ':(top,exclude,glob)city-viewer/legacy/**']);
   if (laterData) {
     const count = laterData.split('\n').filter(Boolean).length;
     add(`${file} 记录的提交 ${recorded} 之后还有 ${count} 个改动 city-viewer/ 的提交（最新数据提交应为 ${headShort}）`);
