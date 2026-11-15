@@ -7,7 +7,7 @@ const vm = require('node:vm');
 // Tiny in-memory fixtures only: never evaluate nationwide shards or the WASM loader.
 const html = fs.readFileSync(path.resolve(__dirname, '../../city-viewer/index.html'), 'utf8');
 const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]).join('\n');
-const exposed = inline.replace(/\}\)\(\);\s*$/, `window.__TEST__={state,els,startSelectedView,loadOverviewData,selectProvince,selectCity,loadKeys,loadCityScript,runGlobalSearch,restoreSearchView,computeResults,renderMapPoints,applyZoomLod,applyDispMode};})();`);
+const exposed = inline.replace(/\}\)\(\);\s*$/, `window.__TEST__={state,els,startSelectedView,loadOverviewData,selectProvince,selectCity,loadKeys,loadCityScript,runGlobalSearch,restoreSearchView,computeResults,renderMapPoints,applyZoomLod,applyDispMode,keysWithPref};})();`);
 assert.notEqual(exposed, inline, 'Viewer IIFE must expose the test seam');
 new vm.Script(exposed);
 
@@ -127,12 +127,13 @@ function fixture(options = {}) {
     map() { return map; },
     tileLayer() { return { addTo() { return this; }, bringToBack() {}, remove() {} }; },
   };
+  const header=new Element('header'),cssProperties={};
   const document = {
     getElementById: id => elements[id] || null,
     createElement: tag => new Element(tag),
-    querySelector: () => new Element('header'),
+    querySelector: () => header,
     addEventListener() {},
-    documentElement: { style: { setProperty() {} } },
+    documentElement: { style: { setProperty(name,value) {cssProperties[name]=value;} } },
     head: { appendChild() { directRequests.push('script'); throw Error('Direct asset injection is forbidden'); } },
   };
   const window = {
@@ -160,11 +161,17 @@ function fixture(options = {}) {
     };
     else throw Error('Unexpected fixture asset: ' + name);
   }
+  if (options.configure) options.configure(window);
   const loader = { async loadScript(name) {
     calls.push(name);
     if (options.load) return options.load(name, { window, installAsset});
     installAsset(name);
   } };
+  const resizeObservers=[];
+  if(options.resizeObserver) window.ResizeObserver=class {
+    constructor(callback){this.callback=callback;resizeObservers.push(this);}
+    observe(target){this.target=target;}
+  };
   if (!options.missingLoader) window.PanoAssets = loader;
   const setTimeout = (callback, delay) => { const id = ++nextTimer; timers.set(id, { callback, delay}); return id; };
   const clearTimeout = id => timers.delete(id);
@@ -186,7 +193,77 @@ function fixture(options = {}) {
     const pending = [...timers.values()]; timers.clear();
     for (const timer of pending) timer.callback();
   }
-  return { elements, calls, directRequests, timers, map, window, windowEvents, renders, api, select, loader, installAsset, runTimers };
+  return { elements, calls, directRequests, timers, map, window, windowEvents, renders, api, select, loader, installAsset, runTimers,header,cssProperties,resizeObservers };
+}
+
+function municipalFixture(code) {
+  const names = { '110000': '北京市', '120000': '天津市', '310000': '上海市', '500000': '重庆市' };
+  const province = names[code], root = 'hidden_' + code;
+  const districtA = 'hidden_' + code.slice(0, 2) + '0101';
+  const districtB = 'hidden_' + code.slice(0, 2) + '0104';
+  const hiddenRows = {
+    [root]: [['CITY' + code, 121.1, 31.1, '市级旧点', '', '', 0, 0, '腾讯隐藏']],
+    [districtA]: [['AREA' + code, 121.2, 31.2, '区A', '', '', 0, 0, '腾讯隐藏']],
+    [districtB]: [['AREA2' + code, 121.3, 31.3, '区B', '', '', 0, 0, '腾讯隐藏'],
+      ['AREA3' + code, 121.4, 31.4, '区B', '', '', 0, 0, '腾讯隐藏']],
+  };
+  const h = fixture({
+    configure(window) {
+      window.PANO_META[code] = { name: province, province, pref: code };
+      window.PANO_COUNT[code] = 1;
+      for (const [key, entries] of Object.entries(hiddenRows)) {
+        window.PANO_META[key] = { name: (key === root ? province : key === districtA ? '区A' : '区B') + '·隐藏街景', province, pref: key };
+        window.PANO_COUNT[key] = entries.length;
+      }
+      window.PANO_META['hidden_' + code.slice(0, 2) + '0001'] = { name: '其他省份近名', province: '其他', pref: 'hidden_' + code.slice(0, 2) + '0001' };
+      window.PANO_COUNT['hidden_' + code.slice(0, 2) + '0001'] = 1;
+    },
+    load(name, { window, installAsset }) {
+      installAsset(name);
+      if (name === 'grid_all.js') {
+        window.PANO_GRID_ALL[code] = [[30250, 7750, 1]];
+        for (const [key, entries] of Object.entries(hiddenRows)) {
+          window.PANO_GRID_ALL[key] = entries.map(entry => [Math.floor(entry[1] / 0.004), Math.floor(entry[2] / 0.004), 1]);
+        }
+        window.PANO_GRID_ALL['hidden_' + code.slice(0, 2) + '0001'] = [[25000, 7000, 1]];
+      } else if (name === 'hidden_pano.js') {
+        for (const [key, entries] of Object.entries(hiddenRows)) window.PANO_CITY[key] = clone(entries);
+        window.PANO_CITY['hidden_' + code.slice(0, 2) + '0001'] = [['OTHER' + code, 100, 28, '', '', '', 0, 0, '腾讯隐藏']];
+      }
+    },
+  });
+  return { h, province, root, districtA, districtB, hiddenRows };
+}
+
+for (const code of ['110000', '120000', '310000', '500000']) {
+  test('municipal city-wide hidden selector includes every district once: ' + code, async () => {
+    const { h, province, root, districtA, districtB, hiddenRows } = municipalFixture(code);
+    h.select(province, root);
+    assert.deepEqual(h.calls, [], 'Preparing the aggregate must remain metadata-only');
+    assert.deepEqual(Array.from(h.api.keysWithPref(root, h.api.state.provinceKeys)).sort(), Object.keys(hiddenRows).sort());
+    assert.match(h.elements.citySelect.options.find(option => option.value === root).textContent, /全部隐藏/);
+    await h.api.startSelectedView();
+    assert.equal(h.api.state.overviewTotal, 4, 'City-wide overview must include root + both district collections');
+    assert.equal(h.api.state.overviewAllHidden, true);
+    assert.deepEqual(h.calls, ['grid_all.js']);
+    h.elements.dispMode.value = 'points'; h.elements.dispMode.emit('change'); await flush();
+    const expected = Object.values(hiddenRows).flat().map(row => row[0]).sort();
+    assert.deepEqual(Array.from(h.api.state.results, row => row[0]).sort(), expected);
+    assert.equal(new Set(h.api.state.results.map(row => row[0])).size, 4);
+    assert.equal(h.renders.at(-1).args[1].filter(point => point[3]).length, 4);
+    assert.ok(!h.calls.some(name => name.startsWith('data_')), 'Hidden aggregate must not download regular shards');
+    for (const district of [districtA, districtB]) {
+      h.elements.citySelect.value = district; h.elements.citySelect.emit('change'); await flush();
+      assert.deepEqual(Array.from(h.api.state.results, row => row[0]), hiddenRows[district].map(row => row[0]));
+    }
+    h.elements.citySelect.value = root; h.elements.citySelect.emit('change'); await flush();
+    h.elements.roadFilter.value = '区B'; h.api.computeResults();
+    assert.deepEqual(Array.from(h.api.state.results, row => row[0]), hiddenRows[districtB].map(row => row[0]));
+    h.api.renderMapPoints();
+    assert.equal(h.renders.at(-1).args[0].length, 4, 'Filtered base layer must retain the entire selected hidden scope');
+    assert.equal(h.renders.at(-1).args[1].length, 2);
+    assert.equal(h.api.state.results.some(row => row[9] === 'hidden_game'), false);
+  });
 }
 
 function assertIdle(h) {
@@ -210,6 +287,12 @@ function assertRetryControls(h) {
   assert.equal(h.elements.loadingData.style.display, 'none');
   assert.match(h.elements.sgSub.textContent, /加载失败/);
 }
+
+test('header resize observer synchronizes late wrapping without loading street data',async()=>{
+ const h=fixture({resizeObserver:true});assert.equal(h.resizeObservers.length,1);assert.equal(h.resizeObservers[0].target,h.header);
+ assert.equal(h.cssProperties['--header-h'],'52px');h.header.offsetHeight=172;h.resizeObservers[0].callback();
+ assert.equal(h.cssProperties['--header-h'],'172px');assert(h.map.invalidations>0);await flush();assert.deepEqual(h.calls,[]);assertIdle(h);
+});
 
 test('boot remains empty after microtasks and never requests panorama assets', async () => {
   const h = fixture();

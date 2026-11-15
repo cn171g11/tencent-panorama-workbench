@@ -36,6 +36,8 @@ node --test tools/tests/*.test.js
 
 已完成且源未变的检查不重复执行；编码迁移新增fixture和实际解码验收，不用重新扫描全国SID替代。区县点数不按面积猜分；常规采集上传完成也不是“全省已扫全”的证明。
 
+直辖市报告统计由 [专用生成器](<../tools/build_municipality_report.js>)使用冻结DataV区县面与本市名下原坐标流式计算，`--boundaries`指定本地边界，`--evidence`必须全新，可用`--cache`按源／边界／几何SHA复用未变部分。数据导入后重新生成或复核 [区级统计资产](<../city-viewer/municipality-report.js>)；发布器检查metadata及所有涉及源SHA／bytes，不能让同计数坐标变更继续复用旧统计。报告严格面外残差另列，不采用最近归属。详见 [直辖市修复](<municipality-fixes-20261115.md>)。
+
 ## 4. 无损Brotli构建
 
 ```powershell

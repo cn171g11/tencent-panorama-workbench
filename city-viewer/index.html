@@ -80,7 +80,7 @@
 </head>
 <body>
 <header>
-  <h1>tencent-panorama-workbench <span class="ver">v2.46.0</span><span class="ver-note"> · 选择视图后加载</span></h1>
+  <h1>tencent-panorama-workbench <span class="ver">v2.47.0</span><span class="ver-note"> · 选择视图后加载</span></h1>
   <select id="provinceSelect" title="省级行政区"></select>
   <select id="citySelect" title="地级市" disabled></select>
   <select id="countySelect" title="县级行政区" style="display:none"></select>
@@ -454,7 +454,18 @@
     d.forEach(function(c){ if(!c._bb) c._bb=polysBBox(c.polys); });
     return d;
   }
-  function keysWithPref(pref,keys){ return keys.filter(function(k){ return prefOf(k)===pref; }); }
+  function isMunicipalHiddenScope(pref){ return /^hidden_(11|12|31|50)0000$/.test(String(pref)); }
+  function cityPrefMatches(pref,scope){
+    if(pref===scope) return true;
+    // City-wide hidden scopes include district collections, never regular or game data.
+    return isMunicipalHiddenScope(scope) && /^hidden_\d{6}$/.test(String(pref))
+      && pref.slice(7,9)===scope.slice(7,9) && cityMeta(pref).province===cityMeta(scope).province;
+  }
+  function cityScopeName(pref){
+    var name=cityMeta(pref).name;
+    return isMunicipalHiddenScope(pref)?name.replace(/·隐藏街景$/, '·全部隐藏街景'):name;
+  }
+  function keysWithPref(pref,keys){ return keys.filter(function(k){ return cityPrefMatches(prefOf(k),pref); }); }
   function assignCounties(){
     if(!window.PANO_DISTRICTS) return;
     var lists={};
@@ -525,7 +536,7 @@
   }
   function showStartGate(error){
     var p=state.province, city=state.cityFilter;
-    var label=p?(city?(p+' · '+cityMeta(city).name):p):'';
+    var label=p?(city?(p+' · '+cityScopeName(city)):p):'';
     els.startGate.style.display='block';
     els.sgSub.textContent=error
       ? ('加载失败：'+error.message+'。请检查网络后重新加载，或选择其他视图。')
@@ -602,7 +613,7 @@
     els.city.appendChild(all);
     prefs.forEach(function(pf){
       var o=document.createElement('option'); o.value=pf;
-      o.textContent=cityMeta(pf).name;
+      o.textContent=cityScopeName(pf);
       els.city.appendChild(o);
     });
     els.city.disabled=!label;
@@ -811,7 +822,7 @@
       var a=1e9,c=-1e9,d=1e9,f=-1e9,found=false;
       for(var i=0;i<state.entries.length;i++){
         var e=state.entries[i];
-        if(e[9]!==citySel) continue;
+        if(!cityPrefMatches(e[9],citySel)) continue;
         found=true;
         if(e[1]<a)a=e[1]; if(e[1]>c)c=e[1];
         if(e[2]<d)d=e[2]; if(e[2]>f)f=e[2];
@@ -1164,7 +1175,7 @@
     var out=[];
     for(var i=0;i<state.entries.length;i++){
       var e=state.entries[i];
-      if(citySel&&e[9]!==citySel) continue;
+      if(citySel&&!cityPrefMatches(e[9],citySel)) continue;
       if(state.countyFilter&&e[10]!==state.countyFilter) continue;
       if(roadSel&&((e[3]||'')!==roadSel)) continue;
       if(posQ&&!posMatch(e[0],posQ.conds)) continue;
@@ -1193,7 +1204,7 @@
       return;
     }
     if(state.mode==='city'){
-      els.stats.textContent=(state.cityFilter?cityMeta(state.cityFilter).name:'市级')+'概览 · 约 '+state.overviewTotal.toLocaleString()+' 点 · 选择/点击区县查看点位';
+      els.stats.textContent=(state.cityFilter?cityScopeName(state.cityFilter):'市级')+'概览 · 约 '+state.overviewTotal.toLocaleString()+' 点 · 选择/点击区县查看点位';
       renderMapPoints();
       return;
     }
@@ -1321,7 +1332,7 @@
       var added=0;
       for(var i=0;i<entries.length&&added<POINT_LIMIT;i++){
         var eb=entries[i];
-        if(citySel&&eb[9]!==citySel) continue;
+        if(citySel&&!cityPrefMatches(eb[9],citySel)) continue;
         if(state.countyFilter&&eb[10]!==state.countyFilter) continue;
         base.push([eb[2],eb[1],isHiddenEntry(eb)]);
         added++;
@@ -1515,6 +1526,13 @@
     document.documentElement.style.setProperty('--header-h', h+'px');
   }
   window.addEventListener('resize',function(){ syncHeaderHeight(); if(map) map.invalidateSize(); });
+  // Header controls may wrap after resize/search/font layout, after the window
+  // event. Observe the measured height rather than keeping the previous width's value.
+  var observedHeader=document.querySelector('header');
+  if(window.ResizeObserver&&observedHeader){
+    var headerResizeObserver=new window.ResizeObserver(function(){ syncHeaderHeight(); if(map) map.invalidateSize(); });
+    headerResizeObserver.observe(observedHeader);
+  }
   document.addEventListener('keydown',function(ev){
     if(ev.key==='Escape'&&currentPopup){ currentPopup.remove(); state.activePid=null; renderMapPoints(); }
   });

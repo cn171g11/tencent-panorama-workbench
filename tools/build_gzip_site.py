@@ -227,6 +227,59 @@ def _verify_gzip(source: Path, compressed: Path, expected_bytes: int, expected_h
         raise BuildError(f"Gzip size/SHA-256 verification failed: {source.name}")
 
 
+def _validate_municipality_report(source: Path, files: dict) -> None:
+    """Optional report-only metadata must match the exact current source bytes."""
+    artifact_path = source / "municipality-report.js"
+    if not artifact_path.exists():
+        return
+    text = artifact_path.read_text(encoding="utf-8-sig")
+    prefix = "window.PANO_MUNICIPAL_REPORT="
+    if not text.startswith(prefix) or not text.rstrip().endswith(";"):
+        raise BuildError("Municipal report assignment is malformed")
+    try:
+        artifact = json.loads(text[len(prefix):].rstrip().removesuffix(";"), object_pairs_hook=_unique_object)
+        meta_text = (source / "data_meta.js").read_text(encoding="utf-8-sig")
+        decoder = json.JSONDecoder(object_pairs_hook=_unique_object)
+        metadata, _ = decoder.raw_decode(meta_text, meta_text.index("window.PANO_META=") + len("window.PANO_META="))
+        counts, _ = decoder.raw_decode(meta_text, meta_text.index("window.PANO_COUNT=") + len("window.PANO_COUNT="))
+    except (ValueError, TypeError, KeyError) as error:
+        raise BuildError("Municipal report metadata is malformed") from error
+    if (artifact.get("version") != 1
+            or artifact.get("policy") != "datav-gcj02-polygon-covers-lowest-code-residual-v1"
+            or artifact.get("metaSha256") != _hash_file(source / "data_meta.js")):
+        raise BuildError("Municipal report is stale for current metadata")
+    for code, name in {"110000": "北京市", "120000": "天津市", "310000": "上海市", "500000": "重庆市"}.items():
+        selected = {key: counts[key] for key, meta in metadata.items()
+                    if meta.get("province") == name and not meta.get("virtual")}
+        row = artifact.get("municipalities", {}).get(code, {})
+        if row.get("sourceCounts") != selected:
+            raise BuildError("Municipal report source counts are stale: " + name)
+        regular = sum(value for key, value in selected.items() if not key.startswith("hidden"))
+        hidden = sum(value for key, value in selected.items() if key.startswith("hidden"))
+        districts, residual = row.get("districts", []), row.get("unassigned", {})
+        seen = set()
+        for district in districts:
+            key = district.get("code", "")
+            if (not re.fullmatch(code[:2] + r"\d{4}", key) or key in seen
+                    or any(type(district.get(kind)) is not int or district[kind] < 0 for kind in ("regular", "hidden"))
+                    or district.get("total") != district["regular"] + district["hidden"]):
+                raise BuildError("Municipal report district row is malformed: " + name)
+            seen.add(key)
+        if not districts or any(type(residual.get(kind)) is not int or residual[kind] < 0 for kind in ("regular", "hidden")):
+            raise BuildError("Municipal report residual/district catalog is malformed: " + name)
+        if (row.get("regular") != regular or row.get("hidden") != hidden or row.get("total") != regular + hidden
+                or residual.get("total") != residual["regular"] + residual["hidden"]
+                or sum(d["regular"] for d in districts) + residual["regular"] != regular
+                or sum(d["hidden"] for d in districts) + residual["hidden"] != hidden):
+            raise BuildError("Municipal report district totals do not conserve metadata: " + name)
+        names = {"hidden_pano.js" if key.startswith("hidden") else "data_" + key + ".js" for key in selected}
+        for file_name in names:
+            expected = artifact.get("sources", {}).get(file_name, {})
+            actual = files.get(file_name, {})
+            if expected.get("sha256") != actual.get("sha256") or expected.get("bytes") != actual.get("bytes"):
+                raise BuildError("Municipal report point-source SHA/bytes are stale: " + file_name)
+
+
 def _normalize_gzip_header(source: Path, destination: Path) -> None:
     with source.open("rb") as native:
         def exact(size: int) -> bytes:
@@ -568,6 +621,7 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
                 or _hash_file(original) != static_hashes[name]
                 or _hash_file(viewer_output / name) != static_hashes[name]):
             raise BuildError(f"Static source/copy changed before publication: {name}")
+    _validate_municipality_report(source_path, files)
     files = dict(sorted(files.items()))
     totals = {"files": len(files), "bytes": completed_bytes,
               "compressedBytes": compressed_bytes, "savedBytes": completed_bytes - compressed_bytes,

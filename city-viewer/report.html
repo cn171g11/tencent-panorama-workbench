@@ -85,7 +85,7 @@
 <header>
   <div class="title">
     <h1>tencent-panorama-workbench · 数据报告</h1>
-    <span class="ver" id="version">按省级 / 地级行政区统计常规与隐藏街景点位</span>
+    <span class="ver" id="version">按省级 / 地级市 / 直辖市区县统计常规与隐藏点位</span>
     <a class="back" href="#changelog" style="margin-left:12px">更新公告</a>
     <a class="back" href="./index.html">← 返回查看器</a>
   </div>
@@ -100,7 +100,7 @@
   <div class="bars" id="bars"></div>
 
   <div class="toolbar">
-    <input type="search" id="q" placeholder="搜索省 / 市名称，例如 安徽、芜湖、临沂">
+    <input type="search" id="q" placeholder="搜索省 / 市 / 区县名称，例如 安徽、芜湖、黄浦">
     <select id="sort">
       <option value="total">按合计点位排序</option>
       <option value="hidden">按隐藏街景排序</option>
@@ -113,8 +113,8 @@
   <table>
     <thead>
       <tr>
-        <th data-key="name">省级行政区 / 地级行政区</th>
-        <th data-key="cities">地级市</th>
+        <th data-key="name">省级行政区 / 地级市 / 直辖市区县</th>
+        <th data-key="cities">下级单元</th>
         <th data-key="regular">常规街景</th>
         <th data-key="hidden">隐藏街景</th>
         <th data-key="total">合计</th>
@@ -125,8 +125,9 @@
   </table>
 
   <div class="note" id="note" style="margin-top:16px">
-    统计口径：点位数据按<b>地级行政区</b>存储（超过 18 万点会拆成多个分片），本页按 <code>pref</code> 聚合分片后汇总到省。
-    隐藏街景指「腾讯隐藏街景/时光机」合集，已按地级市拆分。区县一级没有独立计数——数据本身不按区县存储，只有 81 个地级市带区县边界，无法拆出可靠的点数。
+    统计口径：省级总量按源集合 <code>PANO_COUNT</code> 汇总，普通省份按地级 <code>pref</code> 聚合分片。
+    北京、天津、上海、重庆的区县数由其名下全部常规分片（含省级常规补充）及隐藏点的原始 GCJ-02 坐标与同版 DataV 区县面逐点计算；外环减洞、多岛面和共享边统一判定。
+    边界外点保留为“未归属区县／边界外”，不做最近区县猜测；区级行替换原市级／区级混合行，不重复计入总量。报告只加载统计元数据，不读取点位数组。
   </div>
 
   <section id="changelog">
@@ -139,10 +140,13 @@
 </main>
 
 <footer>
-  数据来源：<code>city-viewer/data_meta.js</code>（PANO_META / PANO_COUNT）。页面不加载点位数组，只读元数据，打开即可秒出。
+  数据来源：<code>city-viewer/data_meta.js</code>（PANO_META / PANO_COUNT）及 <code>municipality-report.js</code>（四直辖市区级派生计数）。页面不加载点位数组，只读元数据。
 </footer>
 
 <script src="data_meta.js"></script>
+<script src="asset-manifest.js"></script>
+<script src="municipality-report.js"></script>
+<script src="municipality-report-view.js"></script>
 <script src="changelog.js"></script>
 <script>
 (function(){
@@ -174,6 +178,18 @@
     bucket.total += count;
   });
 
+  var municipalStatus = window.PanoMunicipalReport
+    ? window.PanoMunicipalReport.apply(provinces, META, COUNT, window.PANO_MUNICIPAL_REPORT, window.PANO_ASSET_MANIFEST)
+    : { unavailable: ['直辖市区级统计模块'] };
+  if (!window.PanoMunicipalReport) {
+    ['北京市', '天津市', '上海市', '重庆市'].forEach(function(name){
+      var p = provinces[name]; if (!p) return;
+      p.cities = { municipality: { code: name, name: name + '（区级统计未就绪）', regular: p.regular, hidden: p.hidden, total: p.total } };
+    });
+  }
+  if (municipalStatus.unavailable.length) {
+    document.getElementById('note').textContent = '区级统计未就绪：' + municipalStatus.unavailable.join('、') + '。仍显示市级真实合计；缺失或过期统计不标成0。';
+  }
   var list = Object.keys(provinces).map(function(name){ return provinces[name]; });
   var totals = { regular: 0, hidden: 0, total: 0, provinces: list.length, cities: 0 };
   list.forEach(function(p){
@@ -190,7 +206,7 @@
     ['常规街景', fmt(totals.regular), ''],
     ['隐藏街景', fmt(totals.hidden), 'hidden'],
     ['省级行政区', fmt(totals.provinces), ''],
-    ['地级行政区', fmt(totals.cities), '']
+    ['下级统计单元', fmt(totals.cities), '']
   ].map(function(item){
     return '<div class="card ' + item[2] + '"><div class="k">' + item[0] + '</div><div class="v">' + item[1] + '</div></div>';
   }).join('');
@@ -228,7 +244,7 @@
       var open = !!state.open[p.name] || (state.q && !match(p.name));
       html += '<tr class="prov' + (open ? ' open' : '') + '" data-name="' + esc(p.name) + '">' +
         '<td><span class="caret">' + (open ? '▾' : '▸') + '</span> ' + esc(p.name) + '</td>' +
-        '<td>' + p.cityCount + '</td>' +
+        '<td>' + p.cityCount + (p.unit === '区县' ? '（区县／残差）' : '') + '</td>' +
         '<td class="num-reg">' + fmt(p.regular) + '</td>' +
         '<td class="num-hid' + (p.hidden ? '' : ' zero') + '">' + fmt(p.hidden) + '</td>' +
         '<td>' + fmt(p.total) + '</td>' +
@@ -248,7 +264,7 @@
 
     rowsEl.innerHTML = html || '<tr><td colspan="6" class="muted">没有匹配的省市</td></tr>';
     document.getElementById('version').textContent =
-      '共 ' + fmt(totals.total) + ' 点 · ' + totals.provinces + ' 个省级 · ' + totals.cities + ' 个地级 · 隐藏占比 ' + (totals.share * 100).toFixed(1) + '%';
+      '共 ' + fmt(totals.total) + ' 点 · ' + totals.provinces + ' 个省级 · ' + totals.cities + ' 个下级统计单元 · 隐藏占比 ' + (totals.share * 100).toFixed(1) + '%';
   }
 
   rowsEl.addEventListener('click', function(event){

@@ -175,18 +175,33 @@ async function main() {
   assert.equal(report.checks.game.redFlags, 15);
   async function query(q, note) {
     await evaluate(`(function(){var e=document.getElementById('search');e.value=${JSON.stringify(q)};e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-    await until(() => evaluate(`document.getElementById('stats').textContent.includes('搜索命中 1 条')&&document.getElementById('stats').textContent.includes(${JSON.stringify(note)})`));
+    try {
+      await until(() => evaluate(`document.getElementById('stats').textContent.includes('搜索命中 1 条')&&document.getElementById('stats').textContent.includes(${JSON.stringify(note)})`), 240000);
+    } catch (error) {
+      report.checks.queryFailure = await evaluate(`({query:${JSON.stringify(q)},input:document.getElementById('search').value,stats:document.getElementById('stats').textContent,loading:document.getElementById('loadingData').textContent,headerCss:document.documentElement.style.getPropertyValue('--header-h'),headerHeight:document.querySelector('header').offsetHeight,workers:window.__ASSET_WORKERS__})`);
+      report.checks.runtimeExceptions = exceptions; report.checks.requestsAtFailure = requests;
+      throw error;
+    }
   }
   await query(target[0], 'panoid 搜索');
   const positions = await evaluate(`(function(){var l=Object.values(window.__ASSET_TEST_MAP__._layers).find(l=>l._hits&&l._hits.length===1);return l?l._hits[0].slice(0,2):null;})()`);
   assert(positions); assert.equal(positions[0], target[2]); assert.equal(positions[1], target[1]);
+  const expectedHidden = targetCollection === 'hidden' || targetCollection.startsWith('hidden_');
+  const targetMarker = await evaluate(`(function(){var l=Object.values(window.__ASSET_TEST_MAP__._layers).find(l=>l._hits&&l._hits.length===1);return l?{red:l._hits[0][3],coordinates:l._hits[0].slice(0,2)}:null;})()`);
+  assert(targetMarker); assert.equal(Boolean(targetMarker.red), expectedHidden, 'New sample hidden/regular marker classification changed');
   await evaluate(`void window.__ASSET_TEST_MAP__.fire('click',{latlng:window.L.latLng(${target[2]},${target[1]})})`);
   assert(await evaluate(`document.querySelector('.pv-meta .pid').textContent===${JSON.stringify(target[0])}`));
-  report.checks.panoid = { sid: target[0], coordinates: positions, exactNumericValues: true };
-  await query('@1-23:' + target[0], 'panoid 定位'); report.checks.positionQuery = true;
+  report.checks.panoid = { sid: target[0], collection: targetCollection, coordinates: positions, exactNumericValues: true, expectedHidden, redFlag: Boolean(targetMarker.red) };
+  const positionQuery = '@1-23:' + target[0] + '&@16-20:' + target[0].slice(15, 20);
+  await query(positionQuery, 'panoid 定位'); report.checks.positionQuery = { query: positionQuery, exactSid: target[0], indexedIntersection: true };
   for (const width of [560, 705, 1280, 1440]) {
     await send('Emulation.setDeviceMetricsOverride', { width, height: 720, deviceScaleFactor: 1, mobile: false });
-    await until(() => evaluate(`Math.abs(parseFloat(document.documentElement.style.getPropertyValue('--header-h'))-document.querySelector('header').offsetHeight)<1`), 10000);
+    try {
+      await until(() => evaluate(`Math.abs(parseFloat(document.documentElement.style.getPropertyValue('--header-h'))-document.querySelector('header').offsetHeight)<1`), 10000);
+    } catch (error) {
+      report.checks.viewportFailure = await evaluate(`({requestedWidth:${width},width:innerWidth,headerCss:document.documentElement.style.getPropertyValue('--header-h'),headerHeight:document.querySelector('header').offsetHeight,stats:document.getElementById('stats').textContent,search:document.getElementById('search').value})`);
+      throw error;
+    }
     const box = await evaluate(`(function(){var r=document.getElementById('search').getBoundingClientRect();return {width:innerWidth,inputLeft:r.left,inputRight:r.right,inputWidth:r.width,headerHeight:document.querySelector('header').offsetHeight};})()`);
     assert(box.inputWidth > 100 && box.inputLeft >= 0 && box.inputRight <= width + 1); report.viewports.push(box);
     if (width === 560 || width === 1280) {
@@ -195,7 +210,8 @@ async function main() {
   }
   const compressed = requests.filter(u => /\.js\.(?:gz|br)(?:\?|$)/.test(u));
   const rawLarge = requests.filter(u => /\/(?:data_(?!meta|districts)[A-Za-z0-9_]+|hidden_pano|grid_all|pano_search_index)\.js(?:\?|$)/.test(u));
-  assert(compressed.some(u => u.includes('pano_search_index.js' + suffix))); assert(compressed.some(u => u.includes('data_' + targetCollection)));
+  const targetAsset = targetCollection === 'hidden' || targetCollection.startsWith('hidden_') ? 'hidden_pano.js' : 'data_' + targetCollection + '.js';
+  assert(compressed.some(u => u.includes('pano_search_index.js' + suffix))); assert(compressed.some(u => u.includes(targetAsset + suffix)));
   assert.equal(rawLarge.length, 0); assert.equal(exceptions.length, 0, exceptions.join('\n'));
   report.checks.nativeCodecs = await evaluate('window.__ASSET_NATIVE_CODECS__');
   report.checks.workerLifecycle = await evaluate('window.__ASSET_WORKERS__');
