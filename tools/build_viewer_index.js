@@ -48,7 +48,7 @@ function serializeIndex(index) {
   return output;
 }
 
-function addEntryToStats(stats, key, entry) {
+function addEntryToStats(stats, key, entry, searchGroup = 'all') {
   const panoramaId = String(entry[0]);
   const longitude = Number(entry[1]);
   const latitude = Number(entry[2]);
@@ -61,14 +61,15 @@ function addEntryToStats(stats, key, entry) {
   cells.set(cellKey, (cells.get(cellKey) || 0) + 1);
 
   if (!stats.withSearch) return;
-  if (panoramaId.length >= PREFIX_LENGTH) {
+  const wanted = (group) => searchGroup === 'all' || searchGroup === group;
+  if (wanted('prefix') && panoramaId.length >= PREFIX_LENGTH) {
     addToIndex(stats.prefix, panoramaId.slice(0, PREFIX_LENGTH).toUpperCase(), key);
   }
-  if (panoramaId.length >= SEGMENT_END) {
+  if (wanted('seg1620') && panoramaId.length >= SEGMENT_END) {
     addToIndex(stats.segments, panoramaId.slice(SEGMENT_START, SEGMENT_END).toUpperCase(), key);
   }
-  addToIndex(stats.roads, normalizeRoadName(entry[3]), key);
-  addToIndex(stats.dates, String(entry[4] || "").trim(), key);
+  if (wanted('roads')) addToIndex(stats.roads, normalizeRoadName(entry[3]), key);
+  if (wanted('dates')) addToIndex(stats.dates, String(entry[4] || "").trim(), key);
 }
 
 function collectCityFiles() {
@@ -79,14 +80,14 @@ function collectCityFiles() {
     .map((fileName) => path.join(VIEWER_ROOT, fileName));
 }
 
-function buildStats(withSearch = false) {
+function buildStats(withSearch = false, searchGroup = 'all') {
   const stats = { grid: {}, withSearch, prefix: {}, segments: {}, roads: {}, dates: {} };
   let totalEntries = 0;
   const files = collectCityFiles();
   let completedFiles = 0;
   for (const filePath of files) {
     forEachPanoRow(filePath, (key, entry) => {
-      addEntryToStats(stats, key, entry);
+      addEntryToStats(stats, key, entry, searchGroup);
       totalEntries++;
     }, (key) => { stats.grid[key] = stats.grid[key] || new Map(); });
     if (++completedFiles % 50 === 0) {
@@ -96,13 +97,61 @@ function buildStats(withSearch = false) {
   }
   forEachPanoRow(path.join(VIEWER_ROOT, 'hidden_pano.js'), (key, entry) => {
     if (key === 'hidden' || key.startsWith('hidden_')) {
-      addEntryToStats(stats, key, entry);
+      addEntryToStats(stats, key, entry, searchGroup);
       totalEntries++;
     }
   }, (key) => {
     if (key === 'hidden' || key.startsWith('hidden_')) stats.grid[key] = stats.grid[key] || new Map();
   });
   return { stats, totalEntries };
+}
+
+/* Build the four search groups one at a time and stream them into the file as a
+ * single sorted JSON object. Each pass drops its index before the next one, so
+ * peak heap stays near one group's Set graph instead of four at once. The output
+ * is byte-identical to the previous all-at-once writer.
+ * Each entry is [outputName, statsKey, groupFlag]. */
+const SEARCH_GROUPS = [
+  ['prefix', 'prefix', 'prefix'],
+  ['seg1620', 'segments', 'seg1620'],
+  ['roads', 'roads', 'roads'],
+  ['dates', 'dates', 'dates'],
+];
+
+function writeSearchIndexGrouped(collect = (group) => buildStats(true, group).stats,
+  groups = SEARCH_GROUPS) {
+  const filePath = path.join(VIEWER_ROOT, 'pano_search_index.js');
+  const descriptor = fs.openSync(filePath, 'w');
+  let pending = '';
+  function append(value) {
+    pending += value;
+    if (pending.length >= 65536) { fs.writeSync(descriptor, pending, null, 'utf8'); pending = ''; }
+  }
+  const summary = {};
+  try {
+    append('window.PANO_SEARCH_INDEX={');
+    groups.forEach(([name, statsKey, group], position) => {
+      if (position) append(',');
+      const stats = collect(group);
+      const index = stats[statsKey];
+      if (!index) throw new Error('Search group ' + name + ' was not collected under ' + statsKey);
+      append(JSON.stringify(name) + ':{');
+      Object.keys(index).sort().forEach((value, number) => {
+        if (number) append(',');
+        append(JSON.stringify(value) + ':' + JSON.stringify(Array.from(index[value]).sort()));
+      });
+      append('}');
+      summary[name] = Object.keys(index).length;
+    });
+    append('};');
+    if (pending) fs.writeSync(descriptor, pending, null, 'utf8');
+  } finally { fs.closeSync(descriptor); }
+  return {
+    prefixes: summary.prefix || 0,
+    segments: summary.seg1620 || 0,
+    roads: summary.roads || 0,
+    bytes: fs.statSync(filePath).size,
+  };
 }
 
 function writeGrid(stats) {
@@ -176,11 +225,13 @@ function writeSearchIndex(stats) {
 function main() {
   const startedAt = Date.now();
   const withSearch = process.argv.includes('--with-search');
-  const { stats, totalEntries } = buildStats(withSearch);
+  // Grid only needs its own pass; the search groups are built one at a time
+  // afterwards so no single moment holds the grid plus four Set graphs.
+  const { stats, totalEntries } = buildStats(false);
   const grid = writeGrid(stats);
   stats.grid = {};
   if (typeof global.gc === 'function') global.gc();
-  const index = withSearch ? writeSearchIndex(stats) : null;
+  const index = withSearch ? writeSearchIndexGrouped() : null;
   const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
   console.log(
     `entries=${totalEntries} grid_keys=${grid.keys} grid_cells=${grid.cells} grid_mb=${(grid.bytes / 1048576).toFixed(2)}`

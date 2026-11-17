@@ -80,7 +80,7 @@
 </head>
 <body>
 <header>
-  <h1>tencent-panorama-workbench <span class="ver">v2.48.0</span><span class="ver-note"> · 选择视图后加载</span></h1>
+  <h1>tencent-panorama-workbench <span class="ver">v2.49.0</span><span class="ver-note"> · 选择视图后加载</span></h1>
   <select id="provinceSelect" title="省级行政区"></select>
   <select id="citySelect" title="地级市" disabled></select>
   <select id="countySelect" title="县级行政区" style="display:none"></select>
@@ -466,19 +466,80 @@
     return isMunicipalHiddenScope(pref)?name.replace(/·隐藏街景$/, '·全部隐藏街景'):name;
   }
   function keysWithPref(pref,keys){ return keys.filter(function(k){ return cityPrefMatches(prefOf(k),pref); }); }
+  // Two cities use OSM town/park units instead of official county rings. Those
+  // units are independent faces: a point can sit in a town and in an overlapping
+  // park at the same time. Filtering therefore tests the selected unit's own
+  // polygons, never a single stored code, and a y-band edge index keeps that test
+  // cheap without keeping a per-point multi-membership array.
+  function isOsmCity(pref){
+    var list=districtsOf(pref);
+    return !!(list&&list.length&&list[0].source==='OpenStreetMap');
+  }
+  function parksFirst(list){
+    return list.slice().sort(function(a,b){
+      return (a.unitKind==='park'?0:1)-(b.unitKind==='park'?0:1);
+    });
+  }
+  function unitBandIndex(unit){
+    if(unit._bands) return unit._bands;
+    var bb=unit._bb, rows=64, cell=Math.max(bb[3]-bb[1],1e-9)/rows, buckets=[];
+    for(var r=0;r<=rows;r++) buckets.push([]);
+    unit.polys.forEach(function(rings){
+      rings.forEach(function(ring){
+        for(var i=1;i<ring.length;i++){
+          var a=ring[i-1],b=ring[i];
+          var r0=Math.floor((Math.min(a[1],b[1])-bb[1])/cell);
+          var r1=Math.floor((Math.max(a[1],b[1])-bb[1])/cell);
+          if(r0<0) r0=0; if(r1>rows) r1=rows;
+          for(var k=r0;k<=r1;k++) buckets[k].push([a[0],a[1],b[0],b[1]]);
+        }
+      });
+    });
+    unit._bands={base:bb[1],cell:cell,rows:rows,buckets:buckets};
+    return unit._bands;
+  }
+  function inUnit(x,y,unit){
+    var bb=unit._bb;
+    if(x<bb[0]||x>bb[2]||y<bb[1]||y>bb[3]) return false;
+    var idx=unitBandIndex(unit), r=Math.floor((y-idx.base)/idx.cell);
+    if(r<0) r=0; if(r>idx.rows) r=idx.rows;
+    var edges=idx.buckets[r], inside=false;
+    // Even-odd over outer rings and their holes gives the exact Polygon result.
+    for(var i=0;i<edges.length;i++){
+      var e=edges[i], yi=e[1], yj=e[3];
+      if((yi>y)!==(yj>y) && x<(e[2]-e[0])*(y-yi)/(yj-yi+1e-15)+e[0]) inside=!inside;
+    }
+    return inside;
+  }
+  function countyMatches(e,pref,code){
+    if(!code) return true;
+    if(isOsmCity(pref)){
+      var list=districtsOf(pref);
+      if(!list) return false;
+      for(var i=0;i<list.length;i++){
+        if(list[i].code===code) return inUnit(e[1],e[2],list[i]);
+      }
+      return false;
+    }
+    return e[10]===code;
+  }
   function assignCounties(){
     if(!window.PANO_DISTRICTS) return;
-    var lists={};
+    var lists={},osm={};
     for(var i=0;i<state.entries.length;i++){
       var e=state.entries[i], pref=e[9];
       var list=lists[pref]; if(list===undefined){ list=lists[pref]=districtsOf(pref); }
       if(!list) continue;
+      var isOsm=osm[pref]; if(isOsm===undefined){ isOsm=osm[pref]=isOsmCity(pref); }
+      var ordered=isOsm?parksFirst(list):list;
       var x=e[1],y=e[2],code='';
-      for(var j=0;j<list.length;j++){
-        var c=list[j],bb=c._bb;
+      for(var j=0;j<ordered.length;j++){
+        var c=ordered[j],bb=c._bb;
         if(x<bb[0]||x>bb[2]||y<bb[1]||y>bb[3]) continue;
-        if(inPolys(x,y,c.polys)){ code=c.code; break; }
+        if(isOsm?inUnit(x,y,c):inPolys(x,y,c.polys)){ code=c.code; break; }
       }
+      // A point outside every OSM unit keeps an empty code: it stays reachable
+      // from the city-wide view, is never nearest-filled and is never dropped.
       e[10]=code;
     }
   }
@@ -491,10 +552,18 @@
     var list=city?districtsOf(city):null;
     els.county.innerHTML='';
     if(!list){ els.county.style.display='none'; return; }
-    var all=document.createElement('option'); all.value=''; all.textContent='全部区县 ('+list.length+')';
+    var osm=isOsmCity(city);
+    var all=document.createElement('option'); all.value='';
+    all.textContent=osm?('全部OSM镇街/园区 ('+list.length+')'):('全部区县 ('+list.length+')');
     els.county.appendChild(all);
-    list.forEach(function(c){ var o=document.createElement('option'); o.value=c.code; o.textContent=c.name; els.county.appendChild(o); });
+    var ordered=osm?parksFirst(list):list;
+    ordered.forEach(function(c){
+      var o=document.createElement('option'); o.value=c.code;
+      o.textContent=osm?(c.name+(c.unitKind==='park'?'（园区，可与其他单元重叠）':'')):c.name;
+      els.county.appendChild(o);
+    });
     els.county.style.display='';
+    els.county.title=osm?'OSM 镇街/园区边界，园区范围可与其他单元重叠，非官方县级区划':'';
   }
   function buildProvinceSelect(placeholder){
     var pm=provinceMap();
@@ -1176,7 +1245,7 @@
     for(var i=0;i<state.entries.length;i++){
       var e=state.entries[i];
       if(citySel&&!cityPrefMatches(e[9],citySel)) continue;
-      if(state.countyFilter&&e[10]!==state.countyFilter) continue;
+      if(!countyMatches(e,prefOf(e[9]),state.countyFilter)) continue;
       if(roadSel&&((e[3]||'')!==roadSel)) continue;
       if(posQ&&!posMatch(e[0],posQ.conds)) continue;
       if(tokens){
@@ -1333,7 +1402,7 @@
       for(var i=0;i<entries.length&&added<POINT_LIMIT;i++){
         var eb=entries[i];
         if(citySel&&!cityPrefMatches(eb[9],citySel)) continue;
-        if(state.countyFilter&&eb[10]!==state.countyFilter) continue;
+        if(!countyMatches(eb,prefOf(eb[9]),state.countyFilter)) continue;
         base.push([eb[2],eb[1],isHiddenEntry(eb)]);
         added++;
       }
@@ -1362,10 +1431,11 @@
       if(cb2<0) return;
       var cl2=cc[cb2], list2=districtsOf(state.cityFilter);
       if(list2){
-        for(var j2=0;j2<list2.length;j2++){
-          var c2=list2[j2], bb2=c2._bb;
+        var osm2=isOsmCity(state.cityFilter), ordered2=osm2?parksFirst(list2):list2;
+        for(var j2=0;j2<ordered2.length;j2++){
+          var c2=ordered2[j2], bb2=c2._bb;
           if(cl2[0]<bb2[0]||cl2[0]>bb2[2]||cl2[1]<bb2[1]||cl2[1]>bb2[3]) continue;
-          if(inPolys(cl2[0],cl2[1],c2.polys)){
+          if(osm2?inUnit(cl2[0],cl2[1],c2):inPolys(cl2[0],cl2[1],c2.polys)){
             els.county.value=c2.code; state.countyFilter=c2.code;
             ensureCityData(state.cityFilter,function(){ state.mode='detail'; rerender(); fitMap(); });
             return;
