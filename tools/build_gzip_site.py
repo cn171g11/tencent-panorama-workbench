@@ -5,6 +5,8 @@ The default compressor uses only the Python standard library; the optional 7zip
 backend uses an already-installed executable for bounded Deflate optimization.
 Brotli uses an existing Node executable and native zlib streaming (quality 11,
 window 22, at most two workers), with strict decode/byte/SHA verification.
+An explicit --reuse-site can reuse matching assets from a successful Brotli/v2
+site, but copies them into the new output and fully verifies every copied stream.
 The source viewer is never rewritten. Point shards and derived indexes are streamed
 as raw bytes, never decoded or normalized. Existing nonempty output directories
 are always refused, including after a failed build. Choose a new --output to retry.
@@ -463,6 +465,204 @@ def _compress_asset_brotli(source: Path, destination: Path, asset: Asset, *,
     return {"url": asset.name + ".br", **entry}
 
 
+@dataclass(frozen=True)
+class BrotliReuseSite:
+    root: Path
+    files: dict[str, dict]
+    signatures: dict[str, tuple[int, int, int, int]]
+    report_sha256: str
+
+
+def _reject_reuse_links(path: Path) -> None:
+    # resolve() alone hides symlink/junction ancestors. Check the lexical path
+    # first, including Windows reparse points (junctions on Python 3.11 too).
+    import stat
+    absolute = path.absolute()
+    for part in (absolute, *absolute.parents):
+        if part.is_symlink() or (part.exists() and
+                getattr(part.lstat(), "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
+            raise BuildError(f"Reuse paths cannot contain symlinks/junctions: {part}")
+
+
+def _safe_reuse_name(name: object) -> bool:
+    return (isinstance(name, str) and bool(name) and "\\" not in name
+            and not name.startswith("/") and ":" not in name
+            and all(part not in ("", ".", "..") for part in name.split("/")))
+
+
+def _check_reuse_site(cache: BrotliReuseSite, *, hashes: bool = False) -> None:
+    _reject_reuse_links(cache.root)
+    actual = {path.relative_to(cache.root).as_posix() for path in cache.root.rglob("*") if path.is_file()}
+    if actual != set(cache.signatures):
+        raise BuildError("Reuse cache output inventory changed during build")
+    for name, signature in cache.signatures.items():
+        path = _require_file(cache.root, name)
+        _reject_reuse_links(path)
+        if _signature(path) != signature or path.stat().st_nlink != 1:
+            raise BuildError(f"Reuse cache file changed or aliased during build: {name}")
+    report = cache.root / "build-report.json"
+    if _hash_file(report) != cache.report_sha256 or _signature(report) != cache.signatures["build-report.json"]:
+        raise BuildError("Reuse cache build report changed during build")
+    if hashes:
+        for name, entry in cache.files.items():
+            path = cache.root / "city-viewer" / entry["url"]
+            if (_hash_file(path) != entry["compressedSha256"]
+                    or _signature(path) != cache.signatures["city-viewer/" + entry["url"]]):
+                raise BuildError(f"Reuse cache compressed size/SHA-256 changed: {name}")
+
+
+def _load_reuse_site(reuse_site: Path | str, source: Path, output: Path, *,
+                     quality: int, lgwin: int) -> BrotliReuseSite:
+    path = Path(reuse_site)
+    for directory in (path, source, output):
+        _reject_reuse_links(directory)
+    root = path.resolve()
+    if not root.is_dir():
+        raise BuildError("Reuse cache site directory does not exist")
+    for other in (source, output):
+        if root == other or root.is_relative_to(other) or other.is_relative_to(root):
+            raise BuildError("Reuse cache must be independent of source/output (no overlap or alias)")
+    report_path = _require_file(root, "build-report.json")
+    signature = _signature(report_path)
+    if signature[2] > 16 * CHUNK_SIZE:
+        raise BuildError("Reuse cache build report exceeds bound")
+    data = report_path.read_bytes()
+    report_hash = hashlib.sha256(data).hexdigest()
+    if _signature(report_path) != signature:
+        raise BuildError("Reuse cache build report changed while reading")
+    try:
+        report = json.loads(data, object_pairs_hook=_unique_object)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise BuildError("Reuse cache build report is invalid") from error
+    compression = {"backend": "node:zlib", "quality": quality, "lgwin": lgwin,
+                   "mode": "generic", "threadsPerWorker": 1}
+    if (not isinstance(report, dict) or type(report.get("version")) is not int
+            or report["version"] != 2 or report.get("codec") != "brotli"
+            or report.get("compression") != compression
+            or any(type(report.get("compression", {}).get(key)) is not int
+                   for key in ("quality", "lgwin", "threadsPerWorker"))):
+        raise BuildError("Reuse cache requires Brotli/v2 with identical valid compression parameters")
+    files = report.get("files")
+    if not isinstance(files, dict) or not files:
+        raise BuildError("Reuse cache asset inventory is invalid")
+    for name, entry in files.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_]+\.js", name)
+                or not isinstance(entry, dict)
+                or set(entry) != {"url", "bytes", "compressedBytes", "sha256", "compressedSha256"}
+                or entry["url"] != name + ".br"
+                or any(type(entry[key]) is not int or not 0 <= entry[key] <= 2**53 - 1
+                       for key in ("bytes", "compressedBytes"))
+                or entry["compressedBytes"] == 0
+                or any(not isinstance(entry[key], str) or not re.fullmatch("[a-f0-9]{64}", entry[key])
+                       for key in ("sha256", "compressedSha256"))):
+            raise BuildError(f"Reuse cache asset entry is invalid: {name}")
+    raw_bytes = sum(entry["bytes"] for entry in files.values())
+    compressed_bytes = sum(entry["compressedBytes"] for entry in files.values())
+    totals = {"files": len(files), "bytes": raw_bytes, "compressedBytes": compressed_bytes,
+              "savedBytes": raw_bytes - compressed_bytes,
+              "savingPercent": round((1 - compressed_bytes / raw_bytes) * 100, 4) if raw_bytes else 0.0}
+    if (report.get("totals") != totals or type(report.get("verifiedFiles")) is not int
+            or report["verifiedFiles"] != len(files) or type(report.get("pointFiles")) is not int
+            or report["pointFiles"] != len(files) - len(DERIVED_FILES)
+            or not set(DERIVED_FILES).issubset(files)):
+        raise BuildError("Reuse cache is not a fully verified successful build report")
+    static = report.get("staticFiles")
+    if (not isinstance(static, list) or any(not _safe_reuse_name(name) for name in static)
+            or len(set(static)) != len(static)
+            or not set(FRONTEND_FILES + BROTLI_STATIC_FILES).issubset(static)):
+        raise BuildError("Reuse cache static inventory is invalid")
+    expected = {"city-viewer/" + name for name in static}
+    expected.update("city-viewer/" + entry["url"] for entry in files.values())
+    expected.update({"city-viewer/asset-manifest.js", "build-report.json", "index.html", ".nojekyll"})
+    if (len(expected) != len(static) + len(files) + 4
+            or report.get("outputFiles") != sorted(expected)):
+        raise BuildError("Reuse cache success/output inventory is invalid")
+    signatures = {}
+    identities = set()
+    for candidate in root.rglob("*"):
+        _reject_reuse_links(candidate)
+        if candidate.is_file():
+            name = candidate.relative_to(root).as_posix()
+            sig = _signature(candidate)
+            identity = sig[:2]
+            if identity in identities or candidate.stat().st_nlink != 1:
+                raise BuildError(f"Reuse cache file aliases are not accepted: {name}")
+            identities.add(identity)
+            signatures[name] = sig
+    if set(signatures) != expected or signatures["build-report.json"] != signature:
+        raise BuildError("Reuse cache output inventory/report changed or is incomplete")
+    if (type(report.get("siteBytes")) is not int
+            or not 1 <= report["siteBytes"] <= MAX_SITE_BYTES
+            or report["siteBytes"] != sum(sig[2] for sig in signatures.values())):
+        raise BuildError("Reuse cache siteBytes gate/inventory is invalid")
+    manifest_path = root / "city-viewer/asset-manifest.js"
+    manifest = {key: report[key] for key in ("version", "codec", "files", "totals")}
+    expected_manifest = (MANIFEST_PREFIX + _js_json(manifest) + ";\n").encode("utf-8")
+    if (signatures["city-viewer/asset-manifest.js"][2] != len(expected_manifest)
+            or signatures["index.html"][2] != len(REDIRECT)
+            or manifest_path.read_bytes() != expected_manifest
+            or (root / "index.html").read_bytes() != REDIRECT
+            or signatures[".nojekyll"][2] != 0):
+        raise BuildError("Reuse cache publication success markers are invalid")
+    cache = BrotliReuseSite(root, files, signatures, report_hash)
+    _check_reuse_site(cache)
+    return cache
+
+
+def _reuse_asset_brotli(source: Path, destination: Path, asset: Asset, *,
+                         cache: BrotliReuseSite, node: str, quality: int, lgwin: int,
+                         progress: Callable[[str], None] | None = None) -> dict:
+    original = _require_file(source, asset.name)
+    _reject_reuse_links(original)
+    if original.stat().st_nlink != 1 or _signature(original) != asset.signature:
+        raise BuildError(f"Source changed or aliased after preflight: {asset.name}")
+    raw_hash = _hash_file(original)
+    if _signature(original) != asset.signature:
+        raise BuildError(f"Source changed during reuse candidate hashing: {asset.name}")
+    entry = cache.files.get(asset.name)
+    if entry is None or entry["bytes"] != asset.size or entry["sha256"] != raw_hash:
+        if progress:
+            progress(f"brotli reuse miss asset={asset.name} reason=source-changed-or-absent")
+        result = _compress_asset_brotli(source, destination, asset, node=node, quality=quality, lgwin=lgwin)
+        if result["sha256"] != raw_hash or _signature(original) != asset.signature:
+            raise BuildError(f"Source changed during reuse miss compression: {asset.name}")
+        return result
+    compressed = destination / entry["url"]
+    cached = cache.root / "city-viewer" / entry["url"]
+    cache_signature = cache.signatures["city-viewer/" + entry["url"]]
+    try:
+        _reject_reuse_links(cached)
+        _reject_reuse_links(destination)
+        if (_signature(cached) != cache_signature or cached.stat().st_nlink != 1
+                or cache_signature[2] != entry["compressedBytes"]):
+            raise BuildError(f"Reuse cache compressed input changed/size mismatch: {asset.name}")
+        digest = hashlib.sha256()
+        copied_bytes = 0
+        with cached.open("rb") as raw, compressed.open("xb") as copied:
+            for chunk in iter(lambda: raw.read(CHUNK_SIZE), b""):
+                digest.update(chunk)
+                copied_bytes += len(chunk)
+                copied.write(chunk)
+        if (copied_bytes != entry["compressedBytes"] or digest.hexdigest() != entry["compressedSha256"]
+                or _signature(cached) != cache_signature
+                or _hash_file(cached) != entry["compressedSha256"]
+                or _hash_file(compressed) != entry["compressedSha256"]):
+            raise BuildError(f"Reuse cache compressed size/SHA-256 mismatch: {asset.name}")
+        verified = _verify_brotli(original, compressed, asset.size, raw_hash, node=node)
+        if verified != {key: value for key, value in entry.items() if key != "url"}:
+            raise BuildError(f"Reuse cache verification summary mismatch: {asset.name}")
+        if (_signature(original) != asset.signature or _hash_file(original) != raw_hash
+                or _signature(original) != asset.signature or _signature(cached) != cache_signature):
+            raise BuildError(f"Source/cache changed during reuse verification: {asset.name}")
+    except (BuildError, OSError) as error:
+        if progress:
+            progress(f"brotli reuse rejected asset={asset.name} reason={error}")
+        raise BuildError(f"Reuse cache asset rejected: {asset.name}: {error}") from error
+    if progress:
+        progress(f"brotli reuse hit asset={asset.name} verifiedBytes={asset.size}")
+    return {"url": entry["url"], **verified}
+
+
 def _js_json(value: object) -> str:
     # Escape HTML delimiters and line separators even when metadata includes
     # unusual names. The manifest remains compact JSON and safe in script tags.
@@ -478,11 +678,14 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
                compression_backend: str = "python", seven_zip: Path | str | None = None,
                codec: str = "gzip", node: Path | str | None = None,
                brotli_quality: int = 11, brotli_lgwin: int = 22,
-               max_site_bytes: int = MAX_SITE_BYTES) -> dict:
+               max_site_bytes: int = MAX_SITE_BYTES,
+               reuse_site: Path | str | None = None) -> dict:
     """Build a byte-preserving site; gzip/v1 remains the default API."""
     import shutil
     if codec not in ("gzip", "brotli"):
         raise BuildError("codec must be gzip or brotli")
+    if reuse_site is not None and codec != "brotli":
+        raise BuildError("--reuse-site requires the brotli codec")
     if workers is None:
         workers = min(DEFAULT_WORKERS, MAX_BROTLI_WORKERS) if codec == "brotli" else DEFAULT_WORKERS
     if type(brotli_quality) is not int or not 0 <= brotli_quality <= 11:
@@ -521,10 +724,22 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
     source_path, output_path = Path(source), Path(output)
     if source_path.is_symlink() or output_path.is_symlink():
         raise BuildError("Source/output directory symlinks are not accepted")
+    if reuse_site is not None:
+        # Preserve lexical ancestors before resolve() can hide an alias.
+        for path in (source_path, output_path):
+            _reject_reuse_links(path)
     source_path, output_path = source_path.resolve(), output_path.resolve()
+    reuse_cache = (_load_reuse_site(reuse_site, source_path, output_path,
+                   quality=brotli_quality, lgwin=brotli_lgwin) if reuse_site is not None else None)
     assets, static_names, point_count = _preflight(source_path, output_path, codec)
     if expected_files is not None and len(assets) != expected_files:
         raise BuildError(f"Expected exactly {expected_files} {codec} assets, found {len(assets)}")
+    if reuse_cache is not None:
+        for name in [asset.name for asset in assets] + static_names:
+            original = _require_file(source_path, name)
+            _reject_reuse_links(original)
+            if original.stat().st_nlink != 1:
+                raise BuildError(f"Reuse source file aliases are not accepted: {name}")
     # Snapshot the metadata inventory and static source signatures before copying.
     inventory_signature = _signature(source_path / "data_meta.js")
     static_signatures = {name: _signature(source_path / name) for name in static_names}
@@ -565,7 +780,11 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
             asset = next(asset_iterator, None)
             if asset is None:
                 return False
-            if codec == "brotli":
+            if reuse_cache is not None:
+                future = executor.submit(_reuse_asset_brotli, source_path, viewer_output, asset,
+                    cache=reuse_cache, node=node_executable, quality=brotli_quality,
+                    lgwin=brotli_lgwin, progress=progress)
+            elif codec == "brotli":
                 future = executor.submit(_compress_asset_brotli, source_path, viewer_output, asset,
                     node=node_executable, quality=brotli_quality, lgwin=brotli_lgwin)
             else:
@@ -598,6 +817,8 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
                 future.cancel()
             raise
 
+    if reuse_cache is not None:
+        _check_reuse_site(reuse_cache, hashes=True)
     if set(files) != {asset.name for asset in assets}:
         raise BuildError("Manifest inventory does not exactly match the source asset inventory")
     if (_signature(source_path / "data_meta.js") != inventory_signature
@@ -658,6 +879,19 @@ def build_site(source: Path | str = REPOSITORY_ROOT / "city-viewer",
         report["siteBytes"] = site_bytes
     if site_bytes > max_site_bytes:
         raise BuildError(f"Site size {site_bytes} exceeds siteBytes gate {max_site_bytes} (1GB maximum)")
+    if reuse_cache is not None:
+        _check_reuse_site(reuse_cache)
+        for root in (source_path, output_path):
+            _reject_reuse_links(root)
+        for name in [asset.name for asset in assets] + static_names:
+            original = _require_file(source_path, name)
+            _reject_reuse_links(original)
+            if original.stat().st_nlink != 1:
+                raise BuildError(f"Reuse source file became aliased before publication: {name}")
+        for path in output_path.rglob("*"):
+            _reject_reuse_links(path)
+            if path.is_file() and path.stat().st_nlink != 1:
+                raise BuildError("Reuse output became aliased before publication")
     # Publish success markers only after every byte/SHA, inventory and size gate.
     with (viewer_output / "asset-manifest.js").open("xb") as file:
         file.write(manifest_bytes)
@@ -684,6 +918,8 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"bounded workers 1..{MAX_WORKERS}, Brotli at most 2 (default: gzip {DEFAULT_WORKERS}, Brotli 2)")
     parser.add_argument("--codec", choices=("gzip", "brotli"), default="gzip",
                         help="gzip/v1 compatibility default or Brotli/v2 native streaming compression")
+    parser.add_argument("--reuse-site", type=Path, default=None,
+                        help="optional independent successful Brotli/v2 site cache; copy and fully verify matching assets")
     parser.add_argument("--node", default=None,
                         help="existing Node executable or PATH command (otherwise node from PATH)")
     parser.add_argument("--brotli-quality", type=int, default=11,
@@ -707,7 +943,8 @@ def main(argv: list[str] | None = None) -> int:
                    progress=lambda message: print(message, flush=True),
                     compression_backend=args.compression_backend, seven_zip=args.seven_zip,
                     codec=args.codec, node=args.node, brotli_quality=args.brotli_quality,
-                    brotli_lgwin=args.brotli_lgwin, max_site_bytes=args.max_site_bytes)
+                    brotli_lgwin=args.brotli_lgwin, max_site_bytes=args.max_site_bytes,
+                    reuse_site=args.reuse_site)
     except (BuildError, OSError, EOFError) as error:
         print(f"{args.codec} build failed: {error}", file=sys.stderr, flush=True)
         return 1
